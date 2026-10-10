@@ -1,0 +1,15 @@
+# Keep secrets, local state and build output out of the image build context (deploy/Dockerfile).
+.env
+.env.*
+!.env.example
+deploy/.env
+deploy/certs
+deploy/nginx/sites
+node_modules
+.next
+.git
+.playwright-mcp
+playwright-report
+test-results
+*.pem
+*.key
