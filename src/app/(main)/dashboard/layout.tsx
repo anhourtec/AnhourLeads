@@ -7,16 +7,16 @@ import { cn } from "cn";
 import { AppSidebar } from "@/app/(main)/dashboard/_components/sidebar/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { users } from "@/data/users";
+import { getAppContext } from "@/server/auth/context";
 import { getPreference } from "@/server/server-actions";
 
-import { AccountSwitcher } from "./_components/header/account-switcher";
-import { GitHubRepositoriesMenu } from "./_components/header/github-repositories-menu";
 import { LayoutControls } from "./_components/header/layout-controls";
 import { SearchDialog } from "./_components/header/search-dialog";
 import { ThemeSwitcher } from "./_components/header/theme-switcher";
+import { WorkspaceSwitcher } from "./_components/header/workspace-switcher";
 
 export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
+  const context = await getAppContext();
   const cookieStore = await cookies();
   const defaultOpen = cookieStore.get("sidebar_state")?.value !== "false";
   const [variant, collapsible] = await Promise.all([
@@ -33,7 +33,14 @@ export default async function Layout({ children }: Readonly<{ children: ReactNod
         } as React.CSSProperties
       }
     >
-      <AppSidebar variant={variant} collapsible={collapsible} />
+      <AppSidebar
+        variant={variant}
+        collapsible={collapsible}
+        brand={context.brand}
+        workspaceRole={context.workspace?.role ?? null}
+        isPlatformAdmin={context.user.isPlatformAdmin}
+        user={context.user}
+      />
       <SidebarInset
         className={cn(
           "[html[data-content-layout=centered]_&>*]:mx-auto",
@@ -61,10 +68,13 @@ export default async function Layout({ children }: Readonly<{ children: ReactNod
               <SearchDialog />
             </div>
             <div className="flex items-center gap-2">
+              <WorkspaceSwitcher
+                workspaces={context.memberships}
+                activeId={context.workspace?.organizationId ?? null}
+                locked={context.tenant.kind === "workspace"}
+              />
               <LayoutControls />
               <ThemeSwitcher />
-              <GitHubRepositoriesMenu />
-              <AccountSwitcher users={users} />
             </div>
           </div>
         </header>

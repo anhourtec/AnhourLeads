@@ -7,6 +7,9 @@
 @import "../styles/presets/soft-pop.css";
 @import "../styles/presets/tangerine.css";
 
+/* White-label brand colours: override --primary per workspace (BRANDING.md) */
+@import "../styles/brand.css";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

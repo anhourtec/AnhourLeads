@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { Command } from "lucide-react";
+import { Radar } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 
 import {
@@ -14,16 +14,22 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { APP_CONFIG } from "@/config/app-config";
-import { rootUser } from "@/data/users";
-import { sidebarItems } from "@/navigation/sidebar/sidebar-items";
+import type { Brand } from "@/config/brand";
+import type { Role } from "@/lib/rbac/permissions";
+import { navFor } from "@/navigation/sidebar/sidebar-items";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 import { NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
-import { SupportCard } from "./support-card";
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
+  readonly brand: Brand;
+  readonly workspaceRole: Role | null;
+  readonly isPlatformAdmin: boolean;
+  readonly user: { readonly name: string; readonly email: string; readonly image: string | null };
+}
+
+export function AppSidebar({ brand, workspaceRole, isPlatformAdmin, user, ...props }: AppSidebarProps) {
   const { sidebarVariant, sidebarCollapsible, isSynced } = usePreferencesStore(
     useShallow((s) => ({
       sidebarVariant: s.values.sidebar_variant,
@@ -41,20 +47,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link prefetch={false} href="/dashboard/default">
-                <Command />
-                <span className="font-semibold text-base">{APP_CONFIG.name}</span>
+              <Link prefetch={false} href="/dashboard/overview">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                  <Radar className="size-4" aria-hidden="true" />
+                </span>
+                <span className="truncate font-semibold text-base">{brand.name}</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={sidebarItems} />
+        <NavMain items={navFor(workspaceRole, isPlatformAdmin)} />
       </SidebarContent>
       <SidebarFooter>
-        <SupportCard />
-        <NavUser user={rootUser} />
+        <NavUser user={{ name: user.name, email: user.email, avatar: user.image ?? "" }} />
       </SidebarFooter>
     </Sidebar>
   );
