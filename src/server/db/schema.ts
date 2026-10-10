@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -257,7 +258,7 @@ export const company = pgTable(
     keywords: text("keywords").array().notNull().default(sql`'{}'::text[]`),
     technologies: text("technologies").array().notNull().default(sql`'{}'::text[]`),
     employeeCount: integer("employee_count"),
-    annualRevenue: integer("annual_revenue"),
+    annualRevenue: bigint("annual_revenue", { mode: "number" }),
     foundedYear: integer("founded_year"),
     description: text("description"),
     city: text("city"),
@@ -410,6 +411,16 @@ export const mailbox = pgTable(
     status: text("status", { enum: ["active", "paused", "disconnected", "warming"] })
       .notNull()
       .default("active"),
+    /** SMTP settings for sending. The password is encrypted (src/server/crypto/secrets.ts) and write-only. */
+    smtpHost: text("smtp_host"),
+    smtpPort: integer("smtp_port"),
+    smtpSecure: text("smtp_secure", { enum: ["ssl", "starttls", "none"] })
+      .notNull()
+      .default("starttls"),
+    smtpUser: text("smtp_user"),
+    smtpPasswordEnc: text("smtp_password_enc"),
+    /** Sender identification required in every message (CAN-SPAM / CASL). */
+    postalAddress: text("postal_address"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -478,6 +489,33 @@ export const enrollment = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("enrollment_seq_contact_idx").on(t.sequenceId, t.contactId)],
+);
+
+/** Every email the app sends or drafts for review, one row per message. */
+export const outboundMessage = pgTable(
+  "outbound_message",
+  {
+    id: id(),
+    organizationId: orgId(),
+    mailboxId: text("mailbox_id").references(() => mailbox.id, { onDelete: "set null" }),
+    contactId: text("contact_id").references(() => contact.id, { onDelete: "set null" }),
+    enrollmentId: text("enrollment_id").references(() => enrollment.id, { onDelete: "set null" }),
+    stepId: text("step_id").references(() => sequenceStep.id, { onDelete: "set null" }),
+    toEmail: text("to_email").notNull(),
+    subject: text("subject").notNull(),
+    body: text("body").notNull(),
+    status: text("status", { enum: ["pending_review", "queued", "sent", "failed", "bounced", "blocked"] })
+      .notNull()
+      .default("queued"),
+    /** Why a message was blocked: suppressed, invalid email, mailbox limit… */
+    blockedReason: text("blocked_reason"),
+    providerMessageId: text("provider_message_id"),
+    error: text("error"),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("outbound_org_idx").on(t.organizationId), index("outbound_mailbox_sent_idx").on(t.mailboxId, t.sentAt)],
 );
 
 /* -------------------------------------------------------------------------- */

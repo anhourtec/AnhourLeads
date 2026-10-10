@@ -8,6 +8,13 @@
       "when": 1791662166707,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791662800536,
+      "tag": "0001_mailbox_smtp_outbound",
+      "breakpoints": true
     }
   ]
 }
