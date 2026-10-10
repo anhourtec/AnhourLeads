@@ -116,7 +116,7 @@ test.describe("domains screen", () => {
       const { context, page } = await signedInPage(browser, ACME[role]);
       try {
         expect((await page.goto("/dashboard/settings/domains"))?.status()).toBe(404);
-        await expect(page.getByText("Page not found.")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
       } finally {
         await context.close();
       }

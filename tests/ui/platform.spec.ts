@@ -50,7 +50,7 @@ test.describe("platform screen", () => {
       const { context, page } = await signedInPage(browser, email);
       try {
         expect((await page.goto("/dashboard/platform"))?.status()).toBe(404);
-        await expect(page.getByText("Page not found.")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
       } finally {
         await context.close();
       }

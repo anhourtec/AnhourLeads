@@ -136,6 +136,8 @@ These serve as the fallback; there is no separate default.css file. */
   }
 
   body {
+    /* next/font sets --font-geist-mono on body, so the mono token has to resolve here, not on :root. */
+    --font-mono: var(--font-geist-mono), ui-monospace, monospace;
     @apply bg-background text-foreground;
     font-family: var(--font-sans), system-ui, sans-serif;
   }

@@ -107,8 +107,10 @@ function Kpi({ label, value }: { label: string; value: number }) {
     <Card size="sm">
       <CardHeader>
         <CardDescription>{label}</CardDescription>
-        <CardTitle className="font-medium font-mono text-2xl tabular-nums">{value.toLocaleString("en")}</CardTitle>
       </CardHeader>
+      <CardContent>
+        <span className="font-medium font-mono text-2xl tabular-nums leading-none">{value.toLocaleString("en")}</span>
+      </CardContent>
     </Card>
   );
 }

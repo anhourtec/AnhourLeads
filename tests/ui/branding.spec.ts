@@ -64,7 +64,7 @@ test.describe("branding screen", () => {
       try {
         const res = await page.goto("/dashboard/settings/branding");
         expect(res?.status()).toBe(404);
-        await expect(page.getByText("Page not found.")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
         await expect(page.getByRole("link", { name: "Branding" })).toHaveCount(0);
       } finally {
         await context.close();

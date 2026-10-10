@@ -12,7 +12,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { formatMoney, formatNumber } from "@/lib/format-display";
 
 const config = {
-  amount: { label: "Value", color: "var(--chart-1)" },
+  amount: { label: "Value", color: "var(--primary)" },
 } satisfies ChartConfig;
 
 export function PipelineCard({

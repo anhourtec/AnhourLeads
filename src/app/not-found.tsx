@@ -1,17 +1,35 @@
-"use client";
-
 import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
+import { ArrowLeft, Radar } from "lucide-react";
 
-export default function NotFound() {
+import { Button } from "@/components/ui/button";
+import { getRequestBrand } from "@/server/auth/context";
+
+export default async function NotFound() {
+  const brand = await getRequestBrand();
   return (
-    <div className="flex h-dvh flex-col items-center justify-center space-y-2 text-center">
-      <h1 className="font-semibold text-2xl">Page not found.</h1>
-      <p className="text-muted-foreground">The page you are looking for could not be found.</p>
-      <Link prefetch={false} replace href="/dashboard/default">
-        <Button variant="outline">Go back home</Button>
-      </Link>
-    </div>
+    <main className="flex min-h-dvh flex-col bg-background px-4 py-6 sm:px-10">
+      <div className="flex items-center gap-2">
+        <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
+          <Radar className="size-4" aria-hidden="true" />
+        </span>
+        <span className="font-semibold">{brand.name}</span>
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 py-10 text-center">
+        <div className="flex flex-col gap-1.5">
+          <p className="font-mono text-muted-foreground text-xs tabular-nums">404</p>
+          <h1 className="font-medium text-2xl tracking-tight">Page not found</h1>
+          <p className="max-w-prose text-muted-foreground text-sm">
+            This page doesn't exist, or you don't have access to it. Check the address or go back to your overview.
+          </p>
+        </div>
+        <Button asChild size="sm">
+          <Link href="/dashboard/overview">
+            <ArrowLeft data-icon="inline-start" aria-hidden="true" />
+            Go to overview
+          </Link>
+        </Button>
+      </div>
+    </main>
   );
 }
