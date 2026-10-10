@@ -57,10 +57,24 @@ Adding to the do-not-contact list is open to members on purpose: honouring an op
 
 - Nobody can grant a role above their own, or change or remove someone ranked above them.
 - Only an owner can make someone an owner or demote an owner. The last owner can't be demoted or removed.
-- API keys can't be created with a role above the creator's, can't create keys and can't manage members.
+- API keys can't be created with a role above the creator's. Keys can't create other keys, manage members or delete the workspace. You can only revoke keys at or below your own role.
+- Deleting the workspace needs the owner role and the workspace's exact name as confirmation.
 - Cookie-authenticated writes must come from the same origin (CSRF); cross-site writes get 403.
 - Sign-in on a workspace hostname is refused for non-members with the same "Invalid email or password" message as a wrong password, so membership doesn't leak.
 - Suppressed (do-not-contact) emails and domains are never enrolled or emailed, whatever the role.
+
+## Actions that need two permissions
+
+| Action | Needs |
+| --- | --- |
+| Apply crawl findings to a company | `company:update`, plus `contact:create` to add found people and `company:create` to create a new company |
+| Verify a contact's email and save the result | `enrich:run` + `contact:update` |
+| Enrich an organization when that starts a new crawl | `enrich:run` + `crawler:run` |
+| Erase everything held about an email (privacy request) | `contact:delete` + `suppression:create` |
+
+## Platform administrators
+
+Only users with the platform role can open the Platform screen and `/api/v1/platform/**` (all workspaces, member counts, hostnames, and each workspace's custom-hostname limit, 0 to 50). Everyone else, including every API key, gets 403 from the API and a 404 page.
 
 ## Navigation
 
@@ -73,3 +87,4 @@ The sidebar (`src/navigation/sidebar/sidebar-items.ts`, `navFor`) shows only scr
 | When (UTC) | Who | What |
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created: five workspace roles, platform administrators, API keys, matrix and guard rails |
+| 2026-10-10 | Nishchayjeet Singh (Nish) | Combined-permission actions, key revoke and workspace delete rails, platform screen |
