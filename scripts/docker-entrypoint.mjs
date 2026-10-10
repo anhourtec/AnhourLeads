@@ -68,7 +68,7 @@ function checkConfig() {
     "https://leads.example.com",
   );
   if (!env.SECRETS_ENCRYPTION_KEY) {
-    log("warn", "SECRETS_ENCRYPTION_KEY is not set: mailbox passwords can't be stored", {
+    log("warn", "SECRETS_ENCRYPTION_KEY is not set: stored secrets are encrypted with a key derived from BETTER_AUTH_SECRET, so rotating that secret makes saved mailbox passwords unreadable", {
       name: "SECRETS_ENCRYPTION_KEY",
     });
   }
