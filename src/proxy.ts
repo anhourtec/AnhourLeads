@@ -1,25 +1,69 @@
-// Proxy disabled.
-// Rename this file to `proxy.ts` to enable it.
 import { type NextRequest, NextResponse } from "next/server";
 
+import { getSessionCookie } from "better-auth/cookies";
+
 /**
- * Runs before requests complete.
- * Use for rewrites, redirects, or header changes.
- * Refer to Next.js Proxy docs for more examples.
+ * Optimistic routing before a request completes. Real authorization happens in route() and the
+ * page context (src/server/auth/*); this only redirects signed-out visitors and hides the admin
+ * template's demo screens, which are kept in the tree for reference but are not part of the product.
  */
-export function proxy(_req: NextRequest) {
-  // Example: redirect to dashboard if user is logged in
-  // const token = req.cookies.get("session_token")?.value;
-  // if (token && req.nextUrl.pathname === "/auth/login")
-  //   return NextResponse.redirect(new URL("/dashboard", req.url));
+const TEMPLATE_ROUTES = [
+  "/auth/v1",
+  "/auth/v2",
+  "/chat",
+  "/mail",
+  "/dashboard/default",
+  "/dashboard/crm",
+  "/dashboard/finance",
+  "/dashboard/analytics",
+  "/dashboard/ecommerce",
+  "/dashboard/academy",
+  "/dashboard/logistics",
+  "/dashboard/infrastructure",
+  "/dashboard/productivity",
+  "/dashboard/patient-monitoring",
+  "/dashboard/kanban",
+  "/dashboard/calendar",
+  "/dashboard/chat",
+  "/dashboard/mail",
+  "/dashboard/file-manager",
+  "/dashboard/invoice",
+  "/dashboard/coming-soon",
+  "/dashboard/users",
+  "/dashboard/roles",
+  "/dashboard/profile",
+  "/dashboard/default-v1",
+  "/dashboard/crm-v1",
+  "/dashboard/analytics-v1",
+  "/dashboard/finance-v1",
+];
+
+function matches(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+export function proxy(req: NextRequest) {
+  const { pathname, search } = req.nextUrl;
+
+  if (TEMPLATE_ROUTES.some((prefix) => matches(pathname, prefix))) {
+    return NextResponse.rewrite(new URL("/not-found-page", req.url), { status: 404 });
+  }
+
+  const hasSession = Boolean(getSessionCookie(req, { cookiePrefix: "anhour" }));
+
+  if (pathname === "/") {
+    return NextResponse.redirect(new URL(hasSession ? "/dashboard/overview" : "/auth/login", req.url));
+  }
+
+  if (matches(pathname, "/dashboard") && !hasSession) {
+    const login = new URL("/auth/login", req.url);
+    login.searchParams.set("next", `${pathname}${search}`);
+    return NextResponse.redirect(login);
+  }
 
   return NextResponse.next();
 }
 
-/**
- * Matcher runs for all routes.
- * To skip assets or APIs, use a negative matcher from docs.
- */
 export const config = {
-  matcher: "/:path*",
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:png|svg|jpg|ico|txt)$).*)"],
 };
