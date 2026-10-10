@@ -1,8 +1,9 @@
 import Link from "next/link";
 
-import { ChevronLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 
+import { Button } from "@/components/ui/button";
 import { can } from "@/lib/rbac/permissions";
 import { pageFrom, pagination } from "@/server/http/route";
 import { orNotFound, pageActor } from "@/server/services/engage-context";
@@ -38,13 +39,14 @@ export default async function ListPage({
   return (
     <div className="flex flex-col gap-4 md:gap-6">
       <div className="flex flex-col gap-2">
-        <Link
-          href="/dashboard/lists"
-          className="inline-flex w-fit items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
-        >
-          <ChevronLeft className="size-3.5" aria-hidden="true" />
-          Lists
-        </Link>
+        <div>
+          <Button asChild variant="ghost" size="sm" className="-ml-2">
+            <Link href="/dashboard/lists">
+              <ArrowLeft data-icon="inline-start" aria-hidden="true" />
+              Lists
+            </Link>
+          </Button>
+        </div>
         <PageHeader
           title={<span className="break-words">{list.name}</span>}
           description={

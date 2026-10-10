@@ -349,17 +349,17 @@ export function CrawlJobView({
               </h1>
               <CrawlStatusPill status={job.status} />
             </div>
-            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground text-sm">
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground text-sm">
               <span className="break-all font-mono text-xs">{job.seedUrl}</span>
-              {job.companyName ? <span>· {job.companyName}</span> : null}
+              {job.companyName ? <span>{job.companyName}</span> : null}
               <span>
-                · <span className="font-mono tabular-nums">{job.pagesCrawled}</span> of{" "}
+                <span className="font-mono tabular-nums">{job.pagesCrawled}</span> of{" "}
                 <span className="font-mono tabular-nums">{job.maxPages}</span> pages
               </span>
               <span>
-                · started <RelativeTime iso={job.startedAt ?? job.createdAt} />
+                Started <RelativeTime iso={job.startedAt ?? job.createdAt} />
               </span>
-              {took ? <span>· took {took}</span> : null}
+              {took ? <span>Took {took}</span> : null}
             </p>
           </div>
           {canApply && job.status === "completed" && findings ? (

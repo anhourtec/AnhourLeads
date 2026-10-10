@@ -68,9 +68,13 @@ function checkConfig() {
     "https://leads.example.com",
   );
   if (!env.SECRETS_ENCRYPTION_KEY) {
-    log("warn", "SECRETS_ENCRYPTION_KEY is not set: stored secrets are encrypted with a key derived from BETTER_AUTH_SECRET, so rotating that secret makes saved mailbox passwords unreadable", {
-      name: "SECRETS_ENCRYPTION_KEY",
-    });
+    log(
+      "warn",
+      "SECRETS_ENCRYPTION_KEY is not set: stored secrets are encrypted with a key derived from BETTER_AUTH_SECRET, so rotating that secret makes saved mailbox passwords unreadable",
+      {
+        name: "SECRETS_ENCRYPTION_KEY",
+      },
+    );
   }
   if (env.APP_PROTOCOL === "https" && (env.APP_TLS_PROVIDER ?? "none") === "none") {
     log("warn", "APP_TLS_PROVIDER=none in production: workspace hostnames won't show certificate status", {

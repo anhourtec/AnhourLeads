@@ -8,7 +8,11 @@ import { env } from "@/server/env";
 
 import { SignUpForm } from "../../_components/sign-up-form";
 
-export const metadata: Metadata = { title: "Create a workspace" };
+export async function generateMetadata(): Promise<Metadata> {
+  // A workspace host has no sign-up page; don't title its 404 as one.
+  const { tenant } = await getTenantBrand();
+  return { title: tenant.kind === "primary" && env().APP_ALLOW_SIGNUP ? "Create a workspace" : "Page not found" };
+}
 
 export default async function RegisterPage() {
   const { tenant } = await getTenantBrand();
