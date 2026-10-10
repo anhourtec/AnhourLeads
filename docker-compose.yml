@@ -1,0 +1,60 @@
+# Local services for AnhourLeads development.
+#
+# Host ports are deliberately uncommon so this stack never collides with other projects on the
+# same machine. Keep it that way — see CLAUDE.md, "Ports".
+#
+#   Postgres  localhost:48432  -> container 5432
+#   Redis     localhost:48379  -> container 6379
+#   Mailpit   localhost:48025  -> SMTP 1025 (dev mail sink), web UI http://localhost:48026
+#   (Next.js dev server runs on the host at :3410 — `npm run dev`)
+
+name: anhourleads
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: anhourleads-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-anhour}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-anhour_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-anhourleads}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-48432}:5432"
+    volumes:
+      - anhourleads-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-anhour} -d ${POSTGRES_DB:-anhourleads}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: anhourleads-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-anhour_dev_redis}"]
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-48379}:6379"
+    volumes:
+      - anhourleads-redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD:-anhour_dev_redis} --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-anhour_dev_redis}
+
+  # Development mail sink: catches every email the app sends. Web UI at http://localhost:48026.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: anhourleads-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-48025}:1025"
+      - "127.0.0.1:${MAILPIT_UI_PORT:-48026}:8025"
+
+volumes:
+  anhourleads-postgres:
+  anhourleads-redis:
