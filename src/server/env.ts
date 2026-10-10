@@ -29,6 +29,11 @@ const schema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  /** SMTP RCPT probe during email verification. Off by default: many providers block or tarpit it. */
+  VERIFY_SMTP_PROBE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 

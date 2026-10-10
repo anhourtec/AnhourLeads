@@ -40,6 +40,9 @@
       "!dist",
       "!out",
       "!src/components/ui",
+      "!tests/fixtures",
+      "!drizzle/meta",
+      "!.playwright-mcp",
       "!src/components/calendar"
     ]
   },
