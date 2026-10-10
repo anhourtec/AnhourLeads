@@ -171,7 +171,7 @@ function parseFilters(entityType: ListEntityType, filters: Record<string, unknow
 
 type ListRow = typeof schema.list.$inferSelect;
 
-async function findList(actor: Actor, id: string): Promise<ListRow> {
+export async function findList(actor: Actor, id: string): Promise<ListRow> {
   const [row] = await db
     .select()
     .from(schema.list)

@@ -6,12 +6,12 @@ import { pageActor } from "@/server/services/engage-context";
 import { listMailboxes } from "@/server/services/mailboxes";
 import { searchSequences } from "@/server/services/sequences";
 
-import { PageHeader } from "../_components/records/page-header";
-import { RecordsPagination } from "../_components/records/records-pagination";
-import { SearchBox } from "../_components/records/search-box";
-import { CreateSequenceDialog } from "./_components/create-sequence-dialog";
-import { SequencesTable } from "./_components/sequences-table";
-import { StatusFilter } from "./_components/status-filter";
+import { PageHeader } from "../../_components/records/page-header";
+import { RecordsPagination } from "../../_components/records/records-pagination";
+import { SearchBox } from "../../_components/records/search-box";
+import { CreateSequenceDialog } from "../_components/create-sequence-dialog";
+import { SequencesTable } from "../_components/sequences-table";
+import { StatusFilter } from "../_components/status-filter";
 
 export const metadata: Metadata = { title: "Sequences" };
 

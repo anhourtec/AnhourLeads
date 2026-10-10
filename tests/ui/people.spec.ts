@@ -196,9 +196,9 @@ test.describe("people screen", () => {
 
       expect(errors).toEqual([]);
 
-      // Unknown and other-workspace ids render the not-found page (streamed, so the status stays 200).
-      await page.goto("/dashboard/people/00000000-0000-0000-0000-000000000000");
-      await expect(page.getByRole("heading", { name: "Page not found." })).toBeVisible();
+      // Unknown ids are checked before the loading boundary, so they get a real 404 status.
+      const missing = await page.goto("/dashboard/people/00000000-0000-0000-0000-000000000000");
+      expect(missing?.status()).toBe(404);
     } finally {
       await context.close();
     }

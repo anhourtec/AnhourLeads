@@ -6,11 +6,11 @@ import { pageFrom } from "@/server/http/route";
 import { type CompanySearch, companySearchSchema, searchCompanies } from "@/server/services/companies";
 import { recordsPageActor, workspaceMembers } from "@/server/services/records";
 
-import { CsvImportDialog } from "../_components/records/csv-import-dialog";
-import { ExportButton } from "../_components/records/export-button";
-import { PageHeader } from "../_components/records/page-header";
-import { CompaniesView } from "./_components/companies-view";
-import { CompanyFormDialog } from "./_components/company-form-dialog";
+import { CsvImportDialog } from "../../_components/records/csv-import-dialog";
+import { ExportButton } from "../../_components/records/export-button";
+import { PageHeader } from "../../_components/records/page-header";
+import { CompaniesView } from "../_components/companies-view";
+import { CompanyFormDialog } from "../_components/company-form-dialog";
 
 export const metadata: Metadata = { title: "Companies" };
 

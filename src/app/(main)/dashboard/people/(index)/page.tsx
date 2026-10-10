@@ -7,11 +7,11 @@ import { companyOptions } from "@/server/services/companies";
 import { type ContactSearch, contactSearchSchema, searchContacts } from "@/server/services/contacts";
 import { recordsPageActor, workspaceMembers } from "@/server/services/records";
 
-import { CsvImportDialog } from "../_components/records/csv-import-dialog";
-import { ExportButton } from "../_components/records/export-button";
-import { PageHeader } from "../_components/records/page-header";
-import { PeopleView } from "./_components/people-view";
-import { PersonFormDialog } from "./_components/person-form-dialog";
+import { CsvImportDialog } from "../../_components/records/csv-import-dialog";
+import { ExportButton } from "../../_components/records/export-button";
+import { PageHeader } from "../../_components/records/page-header";
+import { PeopleView } from "../_components/people-view";
+import { PersonFormDialog } from "../_components/person-form-dialog";
 
 export const metadata: Metadata = { title: "People" };
 

@@ -4,9 +4,9 @@ import { can } from "@/lib/rbac/permissions";
 import { pageActor } from "@/server/services/engage-context";
 import { listLists } from "@/server/services/lists";
 
-import { PageHeader } from "../_components/records/page-header";
-import { ListFormDialog } from "./_components/list-form-dialog";
-import { ListsTable } from "./_components/lists-table";
+import { PageHeader } from "../../_components/records/page-header";
+import { ListFormDialog } from "../_components/list-form-dialog";
+import { ListsTable } from "../_components/lists-table";
 
 export const metadata: Metadata = { title: "Lists" };
 

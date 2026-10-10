@@ -122,9 +122,9 @@ test.describe("research screen", () => {
   test("unknown and other-workspace jobs are not found", async ({ browser }) => {
     const { context, page } = await open(browser, ACME.member);
     try {
-      // The route streams (loading.tsx), so the status can be 200; the not-found page is what renders.
-      await page.goto("/dashboard/research/does-not-exist");
-      await expect(page.getByText("Page not found.")).toBeVisible();
+      // The job is checked before the loading boundary, so a missing id gets a real 404 status.
+      const missing = await page.goto("/dashboard/research/does-not-exist");
+      expect(missing?.status()).toBe(404);
     } finally {
       await context.close();
     }

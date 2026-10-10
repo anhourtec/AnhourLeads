@@ -176,7 +176,7 @@ export async function listCrawlJobs(actor: Actor, page: Page, filters: z.infer<t
   return { jobs: rows.map((r) => serializeJob(r.job, r.companyName)), total: totals?.total ?? 0 };
 }
 
-async function jobRow(actor: Actor, id: string) {
+export async function jobRow(actor: Actor, id: string) {
   const [row] = await db
     .select({ job: schema.crawlJob, companyName: schema.company.name })
     .from(schema.crawlJob)

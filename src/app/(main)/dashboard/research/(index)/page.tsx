@@ -10,9 +10,9 @@ import { pageFrom } from "@/server/http/route";
 import { log } from "@/server/log";
 import { listCrawlJobs } from "@/server/services/research";
 
-import { researchActor } from "./_components/actor";
-import { ResearchError } from "./_components/research-error";
-import { ResearchWorkspace } from "./_components/research-workspace";
+import { researchActor } from "../_components/actor";
+import { ResearchError } from "../_components/research-error";
+import { ResearchWorkspace } from "../_components/research-workspace";
 
 export const metadata: Metadata = { title: "Research" };
 
