@@ -1,9 +1,11 @@
 /*
  * White-label brand colours (src/config/brand.ts). Applied with <html data-brand="…">.
  * Named Tailwind palette hues only: 600 in light mode, 500 in dark mode.
+ * `[data-brand-preview="…"]` scopes the same tokens to one element (Settings → Branding preview).
  */
 
-html[data-brand="indigo"] {
+html[data-brand="indigo"],
+[data-brand-preview="indigo"] {
   --primary: var(--color-indigo-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-indigo-600);
@@ -13,7 +15,8 @@ html[data-brand="indigo"] {
 }
 
 html.dark[data-brand="indigo"],
-html[data-brand="indigo"] .dark {
+html[data-brand="indigo"] .dark,
+.dark [data-brand-preview="indigo"] {
   --primary: var(--color-indigo-500);
   --primary-foreground: var(--color-white);
   --ring: var(--color-indigo-500);
@@ -22,7 +25,8 @@ html[data-brand="indigo"] .dark {
   --sidebar-ring: var(--color-indigo-500);
 }
 
-html[data-brand="violet"] {
+html[data-brand="violet"],
+[data-brand-preview="violet"] {
   --primary: var(--color-violet-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-violet-600);
@@ -32,7 +36,8 @@ html[data-brand="violet"] {
 }
 
 html.dark[data-brand="violet"],
-html[data-brand="violet"] .dark {
+html[data-brand="violet"] .dark,
+.dark [data-brand-preview="violet"] {
   --primary: var(--color-violet-500);
   --primary-foreground: var(--color-white);
   --ring: var(--color-violet-500);
@@ -41,7 +46,8 @@ html[data-brand="violet"] .dark {
   --sidebar-ring: var(--color-violet-500);
 }
 
-html[data-brand="blue"] {
+html[data-brand="blue"],
+[data-brand-preview="blue"] {
   --primary: var(--color-blue-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-blue-600);
@@ -51,7 +57,8 @@ html[data-brand="blue"] {
 }
 
 html.dark[data-brand="blue"],
-html[data-brand="blue"] .dark {
+html[data-brand="blue"] .dark,
+.dark [data-brand-preview="blue"] {
   --primary: var(--color-blue-500);
   --primary-foreground: var(--color-white);
   --ring: var(--color-blue-500);
@@ -60,7 +67,8 @@ html[data-brand="blue"] .dark {
   --sidebar-ring: var(--color-blue-500);
 }
 
-html[data-brand="sky"] {
+html[data-brand="sky"],
+[data-brand-preview="sky"] {
   --primary: var(--color-sky-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-sky-600);
@@ -70,7 +78,8 @@ html[data-brand="sky"] {
 }
 
 html.dark[data-brand="sky"],
-html[data-brand="sky"] .dark {
+html[data-brand="sky"] .dark,
+.dark [data-brand-preview="sky"] {
   --primary: var(--color-sky-500);
   --primary-foreground: var(--color-sky-950);
   --ring: var(--color-sky-500);
@@ -79,7 +88,8 @@ html[data-brand="sky"] .dark {
   --sidebar-ring: var(--color-sky-500);
 }
 
-html[data-brand="teal"] {
+html[data-brand="teal"],
+[data-brand-preview="teal"] {
   --primary: var(--color-teal-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-teal-600);
@@ -89,7 +99,8 @@ html[data-brand="teal"] {
 }
 
 html.dark[data-brand="teal"],
-html[data-brand="teal"] .dark {
+html[data-brand="teal"] .dark,
+.dark [data-brand-preview="teal"] {
   --primary: var(--color-teal-500);
   --primary-foreground: var(--color-teal-950);
   --ring: var(--color-teal-500);
@@ -98,7 +109,8 @@ html[data-brand="teal"] .dark {
   --sidebar-ring: var(--color-teal-500);
 }
 
-html[data-brand="emerald"] {
+html[data-brand="emerald"],
+[data-brand-preview="emerald"] {
   --primary: var(--color-emerald-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-emerald-600);
@@ -108,7 +120,8 @@ html[data-brand="emerald"] {
 }
 
 html.dark[data-brand="emerald"],
-html[data-brand="emerald"] .dark {
+html[data-brand="emerald"] .dark,
+.dark [data-brand-preview="emerald"] {
   --primary: var(--color-emerald-500);
   --primary-foreground: var(--color-emerald-950);
   --ring: var(--color-emerald-500);
@@ -117,7 +130,8 @@ html[data-brand="emerald"] .dark {
   --sidebar-ring: var(--color-emerald-500);
 }
 
-html[data-brand="green"] {
+html[data-brand="green"],
+[data-brand-preview="green"] {
   --primary: var(--color-green-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-green-600);
@@ -127,7 +141,8 @@ html[data-brand="green"] {
 }
 
 html.dark[data-brand="green"],
-html[data-brand="green"] .dark {
+html[data-brand="green"] .dark,
+.dark [data-brand-preview="green"] {
   --primary: var(--color-green-500);
   --primary-foreground: var(--color-green-950);
   --ring: var(--color-green-500);
@@ -136,7 +151,8 @@ html[data-brand="green"] .dark {
   --sidebar-ring: var(--color-green-500);
 }
 
-html[data-brand="amber"] {
+html[data-brand="amber"],
+[data-brand-preview="amber"] {
   --primary: var(--color-amber-500);
   --primary-foreground: var(--color-amber-950);
   --ring: var(--color-amber-500);
@@ -146,7 +162,8 @@ html[data-brand="amber"] {
 }
 
 html.dark[data-brand="amber"],
-html[data-brand="amber"] .dark {
+html[data-brand="amber"] .dark,
+.dark [data-brand-preview="amber"] {
   --primary: var(--color-amber-500);
   --primary-foreground: var(--color-amber-950);
   --ring: var(--color-amber-500);
@@ -155,7 +172,8 @@ html[data-brand="amber"] .dark {
   --sidebar-ring: var(--color-amber-500);
 }
 
-html[data-brand="orange"] {
+html[data-brand="orange"],
+[data-brand-preview="orange"] {
   --primary: var(--color-orange-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-orange-600);
@@ -165,7 +183,8 @@ html[data-brand="orange"] {
 }
 
 html.dark[data-brand="orange"],
-html[data-brand="orange"] .dark {
+html[data-brand="orange"] .dark,
+.dark [data-brand-preview="orange"] {
   --primary: var(--color-orange-500);
   --primary-foreground: var(--color-white);
   --ring: var(--color-orange-500);
@@ -174,7 +193,8 @@ html[data-brand="orange"] .dark {
   --sidebar-ring: var(--color-orange-500);
 }
 
-html[data-brand="rose"] {
+html[data-brand="rose"],
+[data-brand-preview="rose"] {
   --primary: var(--color-rose-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-rose-600);
@@ -184,7 +204,8 @@ html[data-brand="rose"] {
 }
 
 html.dark[data-brand="rose"],
-html[data-brand="rose"] .dark {
+html[data-brand="rose"] .dark,
+.dark [data-brand-preview="rose"] {
   --primary: var(--color-rose-500);
   --primary-foreground: var(--color-white);
   --ring: var(--color-rose-500);
@@ -193,7 +214,8 @@ html[data-brand="rose"] .dark {
   --sidebar-ring: var(--color-rose-500);
 }
 
-html[data-brand="red"] {
+html[data-brand="red"],
+[data-brand-preview="red"] {
   --primary: var(--color-red-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-red-600);
@@ -203,7 +225,8 @@ html[data-brand="red"] {
 }
 
 html.dark[data-brand="red"],
-html[data-brand="red"] .dark {
+html[data-brand="red"] .dark,
+.dark [data-brand-preview="red"] {
   --primary: var(--color-red-500);
   --primary-foreground: var(--color-white);
   --ring: var(--color-red-500);
@@ -212,7 +235,8 @@ html[data-brand="red"] .dark {
   --sidebar-ring: var(--color-red-500);
 }
 
-html[data-brand="slate"] {
+html[data-brand="slate"],
+[data-brand-preview="slate"] {
   --primary: var(--color-slate-600);
   --primary-foreground: var(--color-white);
   --ring: var(--color-slate-600);
@@ -222,7 +246,8 @@ html[data-brand="slate"] {
 }
 
 html.dark[data-brand="slate"],
-html[data-brand="slate"] .dark {
+html[data-brand="slate"] .dark,
+.dark [data-brand-preview="slate"] {
   --primary: var(--color-slate-500);
   --primary-foreground: var(--color-white);
   --ring: var(--color-slate-500);
