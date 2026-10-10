@@ -221,6 +221,11 @@ async function seedAcmeData(organizationId: string, owners: Record<(typeof DEMO_
     provider: "smtp",
     displayName: "Acme Member",
     dailyLimit: 40,
+    // Local Mailpit (docker-compose.yml): every demo send lands in http://localhost:48026.
+    smtpHost: "127.0.0.1",
+    smtpPort: 48025,
+    smtpSecure: "none",
+    postalAddress: "Acme Outbound, 100 King St W, Toronto, ON M5X 1A9, Canada",
   });
 
   const sequenceId = id();
