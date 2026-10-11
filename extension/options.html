@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Save person options</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="options.js"></script>
+  </head>
+  <body>
+    <main class="options stack">
+      <div class="stack" style="gap: 4px">
+        <h1>Save person options</h1>
+        <p class="muted">Connect the extension to your workspace with an API key. Create one in Settings → API keys.</p>
+      </div>
+
+      <form id="form" class="stack" novalidate>
+        <div class="field">
+          <label for="serverUrl">Server URL</label>
+          <input id="serverUrl" name="serverUrl" class="mono" type="url" autocomplete="url" placeholder="https://acme.example.com" required />
+          <p class="muted">The address you use to sign in, for example https://acme.example.com or http://acme.localhost:3410.</p>
+        </div>
+        <div class="field">
+          <label for="apiKey">API key</label>
+          <input id="apiKey" name="apiKey" class="mono" type="password" autocomplete="off" spellcheck="false" placeholder="al_…" required />
+          <p class="muted">Stored only in this browser profile. The key's role decides what the extension may do.</p>
+        </div>
+        <div class="actions">
+          <button id="save" class="primary" type="submit">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+            Save and test connection
+          </button>
+          <button id="forget" type="button">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M19 6v14H5V6" /><path d="M8 6V4h8v2" /></svg>
+            Remove key
+          </button>
+        </div>
+      </form>
+
+      <p id="status" class="notice" role="status" aria-live="polite" hidden></p>
+
+      <hr />
+      <div class="stack" style="gap: 6px">
+        <p class="muted">What the extension does and does not do:</p>
+        <ul class="plain">
+          <li>It reads the page only when you click its toolbar button, and only the page in front of you.</li>
+          <li>It saves at most one person per page, after you review the details, into your own workspace.</li>
+          <li>It never opens other pages, scrolls, clicks, or reads lists or search results.</li>
+          <li>You are responsible for following each website's terms when you save someone from it.</li>
+        </ul>
+      </div>
+    </main>
+  </body>
+</html>

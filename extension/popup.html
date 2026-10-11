@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Save person</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="popup.js"></script>
+  </head>
+  <body>
+    <main class="popup stack">
+      <header class="brand">
+        <span class="tile" aria-hidden="true">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34" /><path d="M4 6h.01" /><path d="M2.29 9.62A10 10 0 1 0 21.31 8.35" /><path d="M16.24 7.76A6 6 0 1 0 8.23 16.67" /><path d="M12 18h.01" /><path d="M17.99 11.66A6 6 0 0 1 15.77 16.67" /><circle cx="12" cy="12" r="2" /><path d="m13.41 10.59 5.66-5.66" /></svg>
+        </span>
+        <h1 id="workspace">Save person</h1>
+      </header>
+
+      <p id="status" class="notice" role="status" aria-live="polite">Reading this page…</p>
+
+      <div id="setup" class="actions" hidden>
+        <button id="openOptions" class="primary" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+          Open options
+        </button>
+      </div>
+
+      <form id="form" class="stack" novalidate hidden>
+        <div class="grid">
+          <div class="field">
+            <label for="firstName">First name</label>
+            <input id="firstName" name="firstName" maxlength="100" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="lastName">Last name</label>
+            <input id="lastName" name="lastName" maxlength="100" autocomplete="off" />
+          </div>
+          <div class="field wide">
+            <label for="title">Title</label>
+            <input id="title" name="title" maxlength="200" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="companyName">Company</label>
+            <input id="companyName" name="companyName" maxlength="200" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="companyDomain">Company domain</label>
+            <input id="companyDomain" name="companyDomain" class="mono" maxlength="255" autocomplete="off" placeholder="example.com" />
+          </div>
+          <div class="field wide">
+            <label for="location">Location</label>
+            <input id="location" name="location" maxlength="200" autocomplete="off" placeholder="City, region, country" />
+          </div>
+          <div class="field wide">
+            <label for="email">Email</label>
+            <input id="email" name="email" class="mono" type="email" maxlength="254" autocomplete="off" />
+          </div>
+          <div class="field wide">
+            <label for="linkedinUrl">LinkedIn URL</label>
+            <input id="linkedinUrl" name="linkedinUrl" class="mono" maxlength="500" autocomplete="off" />
+          </div>
+          <div class="field wide" id="listField" hidden>
+            <label for="listId">Add to list</label>
+            <select id="listId" name="listId">
+              <option value="">No list</option>
+            </select>
+          </div>
+        </div>
+        <p class="muted">Source page: <span id="pageUrl" class="mono"></span></p>
+        <div class="actions">
+          <button id="save" class="primary" type="submit">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6" /><path d="M22 11h-6" /></svg>
+            <span id="saveLabel">Save person</span>
+          </button>
+        </div>
+      </form>
+
+      <div id="done" class="actions" hidden>
+        <a id="openRecord" class="button primary" href="about:blank" target="_blank" rel="noopener">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>
+          <span id="openLabel">Open person</span>
+        </a>
+      </div>
+    </main>
+  </body>
+</html>
