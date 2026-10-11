@@ -204,7 +204,10 @@ const SENIORITY_RULES: Array<[RegExp, Seniority]> = [
   [CSUITE_INTL, "c_suite"],
   [/\b(?:owner|proprietor)\b/, "owner"],
   [/\b(?:vp|svp|evp|avp|vice[- ]president)\b/, "vp"],
-  [/\b(?:chief|ceo|cto|cfo|coo|cmo|cio|cpo|cro|cso|ciso|president|managing director|general manager)\b/, "c_suite"],
+  [
+    /\b(?:chief|ceo|cto|cfo|coo|cmo|cio|cpo|cro|cso|ciso|president|managing director|general manager|chair|chairman|chairwoman|chairperson)\b/,
+    "c_suite",
+  ],
   [/\b(?:partner|principal)\b/, "partner"],
   [/\bhead\b/, "head"],
   [/\bdirector\b/, "director"],

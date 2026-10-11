@@ -395,6 +395,8 @@ test.describe("real-web guards", () => {
 
   test("leadership titles in other languages", () => {
     expect(seniorityFromTitle("Gründer")).toBe("founder");
+    expect(seniorityFromTitle("Executive Chair")).toBe("c_suite");
+    expect(seniorityFromTitle("Chairman of the Board")).toBe("c_suite");
     expect(seniorityFromTitle("Mitgründerin & CTO")).toBe("founder");
     expect(seniorityFromTitle("Fondatrice")).toBe("founder");
     expect(seniorityFromTitle("Geschäftsführer")).toBe("c_suite");
