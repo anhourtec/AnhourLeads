@@ -1142,3 +1142,166 @@ export const aiMessage = pgTable(
   },
   (t) => [index("ai_message_chat_idx").on(t.chatId, t.createdAt)],
 );
+
+/* -------------------------------------------------------------------------- */
+/* Installation-wide discovery index (self-hosted data pipeline)              */
+/* Built only from public sources; never from workspaces' private records.    */
+/* -------------------------------------------------------------------------- */
+
+export const indexCompany = pgTable(
+  "index_company",
+  {
+    id: id(),
+    domain: text("domain").notNull().unique(),
+    name: text("name"),
+    websiteUrl: text("website_url"),
+    description: text("description"),
+    industry: text("industry"),
+    keywords: text("keywords").array().notNull().default(sql`'{}'::text[]`),
+    technologies: text("technologies").array().notNull().default(sql`'{}'::text[]`),
+    employeeCount: integer("employee_count"),
+    employeeRange: text("employee_range"),
+    foundedYear: integer("founded_year"),
+    country: text("country"),
+    region: text("region"),
+    city: text("city"),
+    phone: text("phone"),
+    linkedinUrl: text("linkedin_url"),
+    twitterUrl: text("twitter_url"),
+    emailPattern: text("email_pattern"),
+    /** [{ source, url, retrievedAt, fields: string[] }] */
+    sources: jsonb("sources").$type<unknown[]>().notNull().default([]),
+    firstSeenAt: createdAt(),
+    lastCrawledAt: timestamp("last_crawled_at", { withTimezone: true }),
+    optedOut: boolean("opted_out").notNull().default(false),
+  },
+  (t) => [index("index_company_country_idx").on(t.country), index("index_company_industry_idx").on(t.industry)],
+);
+
+export const indexPerson = pgTable(
+  "index_person",
+  {
+    id: id(),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => indexCompany.id, { onDelete: "cascade" }),
+    fullName: text("full_name").notNull(),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    title: text("title"),
+    seniority: text("seniority"),
+    department: text("department"),
+    /** Only an address the company published itself; otherwise found on demand. */
+    publishedEmail: text("published_email"),
+    sourceUrl: text("source_url").notNull(),
+    firstSeenAt: createdAt(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    /** No longer listed on the source page (possible job change). */
+    goneAt: timestamp("gone_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("index_person_company_name_idx").on(t.companyId, t.fullName),
+    index("index_person_title_idx").on(t.title),
+  ],
+);
+
+export const indexJobPosting = pgTable(
+  "index_job_posting",
+  {
+    id: id(),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => indexCompany.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    department: text("department"),
+    location: text("location"),
+    url: text("url").notNull(),
+    source: text("source").notNull(),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("index_job_url_idx").on(t.url), index("index_job_company_idx").on(t.companyId)],
+);
+
+export const indexNews = pgTable(
+  "index_news",
+  {
+    id: id(),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => indexCompany.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    source: text("source").notNull(),
+    firstSeenAt: createdAt(),
+  },
+  (t) => [uniqueIndex("index_news_url_idx").on(t.url), index("index_news_company_idx").on(t.companyId)],
+);
+
+/** Per-host politeness state and robots.txt cache. */
+export const crawlHost = pgTable("crawl_host", {
+  host: text("host").primaryKey(),
+  robotsTxt: text("robots_txt"),
+  robotsFetchedAt: timestamp("robots_fetched_at", { withTimezone: true }),
+  crawlDelayMs: integer("crawl_delay_ms").notNull().default(2000),
+  nextAllowedAt: timestamp("next_allowed_at", { withTimezone: true }),
+  errorCount: integer("error_count").notNull().default(0),
+  blocked: boolean("blocked").notNull().default(false),
+  blockedReason: text("blocked_reason"),
+});
+
+/** URL frontier for the crawler fleet. */
+export const crawlFrontier = pgTable(
+  "crawl_frontier",
+  {
+    id: id(),
+    url: text("url").notNull().unique(),
+    host: text("host").notNull(),
+    kind: text("kind", {
+      enum: ["homepage", "about", "team", "contact", "careers", "sitemap", "rss", "ats", "other"],
+    })
+      .notNull()
+      .default("other"),
+    priority: integer("priority").notNull().default(50),
+    depth: integer("depth").notNull().default(0),
+    status: text("status", { enum: ["queued", "fetching", "done", "failed", "skipped"] })
+      .notNull()
+      .default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+    lastStatusCode: integer("last_status_code"),
+    skippedReason: text("skipped_reason"),
+    discoveredFrom: text("discovered_from"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("frontier_due_idx").on(t.status, t.nextAttemptAt, t.priority), index("frontier_host_idx").on(t.host)],
+);
+
+/** Where seeds come from (Wikidata, domain lists, sitemaps, manual). */
+export const seedSource = pgTable("seed_source", {
+  id: id(),
+  kind: text("kind", { enum: ["wikidata", "domain_list", "sitemap", "manual", "ats_boards"] }).notNull(),
+  name: text("name").notNull(),
+  config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+  enabled: boolean("enabled").notNull().default(false),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  stats: jsonb("stats").$type<Record<string, unknown>>(),
+  createdAt: createdAt(),
+});
+
+/** Opt-outs and removal requests honoured by the index and every workspace. */
+export const indexOptout = pgTable(
+  "index_optout",
+  {
+    id: id(),
+    kind: text("kind", { enum: ["domain", "email", "person"] }).notNull(),
+    /** domain, email address, or "full name|domain" for a person. */
+    value: text("value").notNull(),
+    reason: text("reason"),
+    requestedBy: text("requested_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("index_optout_value_idx").on(t.kind, t.value)],
+);
