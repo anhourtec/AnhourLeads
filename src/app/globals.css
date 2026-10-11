@@ -133,6 +133,13 @@ These serve as the fallback; there is no separate default.css file. */
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    /* Scrollbars show only while their element is scrolling (src/components/scrollbar-activity.tsx).
+       The track keeps its space, so nothing shifts when the thumb appears. */
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  [data-scrolling] {
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 55%, transparent) transparent;
   }
 
   body {

@@ -130,6 +130,42 @@ test.describe("app shell", () => {
     }
   });
 
+  test("scrollbars show only while scrolling", async ({ browser }) => {
+    const { context, page, errors } = await openAs(browser, ACME.owner, { dark: true });
+    try {
+      await page.goto("/dashboard/people?segment=total");
+      await expect(page.getByRole("heading", { name: "Find people" })).toBeVisible();
+      const hidden = "rgba(0, 0, 0, 0) rgba(0, 0, 0, 0)";
+      const state = (selector: string) =>
+        page.evaluate((s) => {
+          const el = document.querySelector(s) as Element;
+          return { scrolling: el.hasAttribute("data-scrolling"), color: getComputedStyle(el).scrollbarColor };
+        }, selector);
+
+      // The page itself, and any inner scroll container (one is added here so every viewport has one).
+      await page.evaluate(() => {
+        const box = document.createElement("div");
+        box.id = "scroll-probe";
+        box.style.cssText = "height:80px;overflow:auto";
+        box.innerHTML = '<div style="height:400px"></div>';
+        document.body.append(box);
+      });
+      for (const selector of ["html", "#scroll-probe"]) {
+        await expect.poll(() => state(selector)).toEqual({ scrolling: false, color: hidden });
+        await page.evaluate((s) => {
+          const el = document.querySelector(s) as Element;
+          (s === "html" ? window : el).scrollBy(0, 40);
+        }, selector);
+        await expect.poll(async () => (await state(selector)).scrolling).toBe(true);
+        expect((await state(selector)).color).not.toBe(hidden);
+        await expect.poll(() => state(selector), { timeout: 5_000 }).toEqual({ scrolling: false, color: hidden });
+      }
+      expect(ownErrors(errors)).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
   test("avatar menu holds profile, theme and display preferences", async ({ browser }) => {
     const { context, page, errors } = await openAs(browser, ACME.admin);
     try {
