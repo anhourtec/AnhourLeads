@@ -14,7 +14,8 @@ How things work: [architecture.md](./architecture.md). Who can do what: [roles.m
 
 - `npm run typecheck`: clean. `npx biome check` on every changed file: no errors.
 - `npm run test:api` (fresh reseed, crawler containers running): **657 / 657 passed**. The real discovery index (573 companies, 442 people, 5,509 job postings) was identical before and after the reseed.
-- UI, per viewport with `--workers=2`: `discovery-search`, `people-parity`, `companies-parity`, `platform-data`, `shell`, `contact-page`: desktop 39 passed and 1 failed, tablet 39 and 1, mobile 40 passed. The failure (platform Hosts tab search) was a real race, fixed; `platform-data` then passed 4 / 4 at every size. The full three-viewport UI suite has not been re-run end to end.
+- `npm run test:ui`, full suite per viewport with `--workers=2` after a fresh reseed: **desktop 160 passed (1 skipped), tablet 159 (2 skipped), mobile 159 (2 skipped), 0 failed**. Skips are by design: the hostname test runs on desktop only (Acme allows 3 hostnames), and the research-results test needs a crawl the API harness creates.
+- `npm run test:ui:isolated` (empty discovery index on its own server and database): **15 / 15 passed** at desktop, tablet and mobile.
 - `npm run scheduler` with every job (no `SCHEDULER_JOBS`) starts and runs all six jobs; it crashed on start before this session.
 
 **Running locally:**
@@ -68,6 +69,9 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 - Platform data Hosts and Crawl queue tables ignore out-of-date responses (the unfiltered first load could overwrite a search once the real crawl made it slow).
 - Fixed the full scheduler crashing on start in plain Node (`createContext is not a function`): `src/server/auth/context.ts`, `services/records.ts` and `services/engage-context.ts` now load `next/navigation` on first use.
 
+- Isolated UI harness (`npm run test:ui:isolated`, `playwright.isolated.config.ts`, `tests/isolated/`): a second dev server on :43410 built into `.next-isolated`, database `anhourleads_isolated` (created, migrated and seeded with `--reset --reset-index` each run; the setup refuses any other database name), Redis db 2. First spec: the empty shared-database screens for owner, viewer and platform admin, which also caught the empty card overflowing its panel.
+- Full UI suite re-run end to end. Fixed: a React missing-key warning on the contact page (server-rendered card actions passed into the client card header), and two tests that depended on data from other tests or on an old mailbox page (mailboxes, audit log).
+
 **Verified:** see "Checks at last commit" above. Playwright MCP screenshots of the new tabs as owner and viewer (desktop, 390 px, dark) in `.playwright-mcp/`.
 
 ### 2026-10-11: Apollo parity and the self-hosted data pipeline
@@ -108,8 +112,6 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 - `tests/ui/domains.spec.ts` "an owner adds, sees and removes a local hostname" can fail when desktop, tablet and mobile run it at the same time against Acme's limit of 3 hostnames; it passes on rerun. Fix: give each project its own hostname slot (or raise the limit in the test and restore it).
 - Parallel Playwright runs share `.playwright-mcp/test-results`; concurrent runs delete each other's traces. Only matters when several people or agents run suites at once; use `--output=<dir>` per run.
 
-- The empty-index state on Find people / Find companies (admin link vs "ask your administrator") has no automated test; emptying the index would wipe the dev crawl. Cover it with a fixture-only database or a feature flag.
-- The full three-viewport UI suite should be re-run end to end (per viewport, `--workers=2`) to confirm the fixes together; only the affected specs were re-run.
 - React's dev-only `Performance.measure … negative time stamp` message appears intermittently; tests filter it. Radix `Checkbox`/`Switch` hidden inputs can log hydration mismatches in dev; screens that hit it render those controls after hydration or use display-only icons.
 
 **Product gaps (next phases)**

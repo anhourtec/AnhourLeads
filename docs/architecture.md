@@ -215,6 +215,7 @@ organization (workspace, brand, hostname_limit) ─┬─ member ── user ─
 | --- | --- | --- |
 | API (RBAC + CRUD) | `npm run test:api` | Every endpoint × owner/admin/manager/member/viewer against the matrix, API keys, 401, 422, CSRF, cross-workspace isolation (Globex vs Acme), domain behaviour (sending via Mailpit, crawler against `tests/fixtures/site`) |
 | UI | `npm run test:ui` | Every screen at 1440 / 834 / mobile, per role, light and dark, no horizontal overflow, no console errors |
+| UI, isolated | `npm run test:ui:isolated` | Installation states the shared dev database can't take on without losing data (empty discovery index). Second dev server on :43410 (`.next-isolated`), database `anhourleads_isolated` (created, migrated, seeded with `--reset --reset-index` every run), Redis db 2 |
 | Visual QA | Playwright MCP | Screens reviewed by hand-driven browser sessions; output in `.playwright-mcp/` |
 
 Both use `playwright.config.ts`; the global setup reseeds the database once per run (`TEST_SKIP_SEED=true` skips it).
