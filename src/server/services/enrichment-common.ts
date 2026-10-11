@@ -292,7 +292,14 @@ export async function contactById(actor: Actor, id: string) {
 
 /** A free lookup recorded in the cost summary. Everything here is free; cached lookups are marked. */
 export interface Lookup {
-  type: "contact_match" | "company_match" | "pattern_detection" | "email_verification" | "website_crawl";
+  type:
+    | "contact_match"
+    | "company_match"
+    | "pattern_detection"
+    | "email_verification"
+    | "website_crawl"
+    /** A call to the workspace's own data provider (its credits, not ours). */
+    | "provider_lookup";
   target: string;
   cached: boolean;
   cost: number;
