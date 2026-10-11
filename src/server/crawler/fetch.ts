@@ -24,8 +24,11 @@ export interface SafeFetchOptions {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
-  /** "html" accepts text/html and XHTML only; "text" accepts text/plain (robots.txt). */
-  expect: "html" | "text";
+  /**
+   * "html" accepts text/html and XHTML only; "text" accepts text/plain (robots.txt); "json" accepts
+   * JSON (public job-board and SPARQL APIs); "xml" accepts XML, RSS and Atom (sitemaps and feeds).
+   */
+  expect: "html" | "text" | "json" | "xml";
   /** Called for every redirect target. Return a skip reason to stop there. */
   checkHop?: (url: URL) => Promise<SkipReason | null>;
 }
@@ -84,8 +87,17 @@ function headerMap(res: IncomingMessage): Partial<Record<string, string>> {
 function acceptable(contentType: string, expect: SafeFetchOptions["expect"]): boolean {
   const type = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
   if (expect === "text") return type === "" || type.startsWith("text/");
+  if (expect === "json") return type === "application/json" || type.endsWith("+json") || type === "text/json";
+  if (expect === "xml") return type.endsWith("/xml") || type.endsWith("+xml") || type === "text/plain";
   return type === "text/html" || type === "application/xhtml+xml";
 }
+
+const ACCEPT: Record<SafeFetchOptions["expect"], string> = {
+  html: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
+  text: "text/plain,*/*;q=0.1",
+  json: "application/json,application/sparql-results+json;q=0.9,*/*;q=0.1",
+  xml: "application/xml,text/xml,application/rss+xml,application/atom+xml;q=0.9,*/*;q=0.1",
+};
 
 function charsetOf(contentType: string): string {
   const charset = contentType.match(/charset=["']?([\w-]+)/i)?.[1]?.toLowerCase() ?? "utf-8";
@@ -130,7 +142,7 @@ function requestOnce(url: URL, opts: Required<Omit<SafeFetchOptions, "checkHop">
         lookup: guardedLookup(opts.allowPrivate),
         headers: {
           "user-agent": opts.userAgent,
-          accept: opts.expect === "html" ? "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1" : "text/plain,*/*;q=0.1",
+          accept: ACCEPT[opts.expect],
           "accept-encoding": "gzip, deflate, br",
           "accept-language": "en;q=1, *;q=0.5",
         },

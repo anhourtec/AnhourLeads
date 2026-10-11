@@ -10,6 +10,7 @@ How to run AnhourLeads in production on one server with Docker, from an empty ma
 | --- | --- | --- |
 | **app** | `deploy/Dockerfile` (`node:22-alpine`), Next.js on port **3410** inside the network | Health: `GET /api/health` (liveness), `GET /api/health/ready` (Postgres + Redis). JSON logs on stdout. Applies migrations on start |
 | **scheduler** | Same image, `npm run scheduler` | Runs every job in `src/server/jobs/registry.ts` (hostname re-checks, crawling, sequences) on its interval. Run exactly one |
+| **crawler** | Same image, `tsx --conditions=react-server scripts/crawler-worker.ts` | Crawler fleet for the installation-wide discovery index ([data-pipeline.md](./data-pipeline.md)). Any number of replicas; no published ports |
 | **postgres** | `postgres:17-alpine` | All data. Volume `postgres-data` |
 | **redis** | `redis:7-alpine` with a password, append-only | Caches, rate limits, locks. Losing it clears caches; no data loss |
 | **nginx** | `nginx:stable-alpine` | Terminates TLS, restores the client address, adds `X-Request-Id`, proxies every hostname to the app. The only service with published ports (80, 443) |
@@ -180,6 +181,23 @@ NGINX starts once the app is healthy; the scheduler once the app is healthy; cer
 
 **Scaling out:** the scheduler must run once. Several app replicas behind a load balancer work (state is in Postgres and Redis), but certbot's per-host files only fit a single NGINX server; use Cloudflare for fleets.
 
+## Crawler fleet (discovery index)
+
+The `crawler` service builds the installation-wide discovery index from public sources only (company websites, their feeds, public job-board APIs, Wikidata). How it works, its boundaries and the opt-out process: [data-pipeline.md](./data-pipeline.md).
+
+| Task | Command |
+| --- | --- |
+| Start or resize the fleet | `docker compose -f docker-compose.prod.yml up -d --scale crawler=3` (or `CRAWLER_REPLICAS=3` in `deploy/.env`) |
+| Run without the index | `docker compose -f docker-compose.prod.yml stop crawler` (or `CRAWLER_REPLICAS=0`) |
+| Logs | `docker compose -f docker-compose.prod.yml logs -f crawler` (one JSON `crawled` line per URL) |
+| Status | Platform → Data pipeline (frontier, hosts, throughput, live workers) or `GET /api/v1/platform/crawler/stats` |
+
+- Workers on other machines work too: run the same image with the same `DATABASE_URL` and `REDIS_URL`. URLs are claimed with `FOR UPDATE SKIP LOCKED` and each host has at most one request in flight across the whole fleet.
+- Each container is unhealthy when `/tmp/crawler-heartbeat` is older than 2 minutes. `SIGTERM` stops claiming and lets in-flight pages finish (grace period 40 s).
+- Set `CRAWLER_USER_AGENT` to your product token and version and `CRAWLER_CONTACT_URL` to a page site owners can read (default: `https://<primary host>/privacy/removal`). Both are sent with every request.
+- The `discovery` scheduler job (every 5 minutes) runs due seed sources, re-queues pages whose re-crawl time came, recovers URLs claimed by a crashed worker and applies retention.
+- Nothing is crawled until a platform administrator adds domains or enables a seed source. Outbound traffic is modest by design: at most one request every 2 s per host (more when robots.txt asks).
+
 ## Environment variables (production)
 
 | Variable | Example / rule |
@@ -209,3 +227,4 @@ Never in production: `CRAWLER_ALLOW_PRIVATE_HOSTS=true`, `APP_TLS_PROVIDER=none`
 | When (UTC) | Who | What |
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created: single-server Docker deployment from server set-up to first sign-in |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Crawler fleet service for the discovery index: scaling, health, identity, variables |
