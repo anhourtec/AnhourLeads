@@ -49,6 +49,8 @@ const CONTACT_STAGE_TONES: Record<ContactStage, Tone> = {
   not_interested: "neutral",
   unresponsive: "attention",
   do_not_contact: "negative",
+  bad_data: "negative",
+  changed_job: "attention",
 };
 
 export function ContactStagePill({ stage }: { stage: ContactStage }) {

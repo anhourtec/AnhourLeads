@@ -11,17 +11,21 @@ export const CONTACT_STAGES = [
   "not_interested",
   "unresponsive",
   "do_not_contact",
+  "bad_data",
+  "changed_job",
 ] as const;
 export type ContactStage = (typeof CONTACT_STAGES)[number];
 
 export const CONTACT_STAGE_LABELS: Record<ContactStage, string> = {
-  new: "New",
-  contacted: "Contacted",
+  new: "Cold",
+  contacted: "Approaching",
   replied: "Replied",
   interested: "Interested",
   not_interested: "Not interested",
   unresponsive: "Unresponsive",
   do_not_contact: "Do not contact",
+  bad_data: "Bad data",
+  changed_job: "Changed job",
 };
 
 export const SENIORITIES = [

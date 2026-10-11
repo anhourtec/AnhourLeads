@@ -430,12 +430,20 @@ const TASK_TYPE: Record<Exclude<StepRow["type"], "auto_email">, (typeof schema.t
   call: "call",
   manual_email: "email",
   task: "action_item",
+  linkedin_connect: "linkedin_connect",
+  linkedin_message: "linkedin_message",
+  linkedin_view: "linkedin_view",
+  linkedin_interact: "linkedin_interact",
 };
 
 const TASK_VERB: Record<Exclude<StepRow["type"], "auto_email">, string> = {
   call: "Call",
   manual_email: "Email",
   task: "Follow up with",
+  linkedin_connect: "Send a LinkedIn connection request to",
+  linkedin_message: "Send a LinkedIn message to",
+  linkedin_view: "View the LinkedIn profile of",
+  linkedin_interact: "Interact with a LinkedIn post by",
 };
 
 function contactName(c: Pick<ContactRow, "firstName" | "lastName" | "email">): string {

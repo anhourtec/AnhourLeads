@@ -20,7 +20,16 @@ export const DEAL_STAGE_INFO: Record<
 
 export const OPEN_DEAL_STAGES = DEAL_STAGES.filter((s) => !DEAL_STAGE_INFO[s].isClosed);
 
-export const TASK_TYPES = ["call", "email", "linkedin", "action_item"] as const;
+export const TASK_TYPES = [
+  "call",
+  "email",
+  "action_item",
+  "linkedin_connect",
+  "linkedin_message",
+  "linkedin_view",
+  "linkedin_interact",
+  "linkedin",
+] as const;
 export const TASK_PRIORITIES = ["low", "medium", "high"] as const;
 export const TASK_STATUSES = ["open", "completed", "skipped"] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
@@ -32,6 +41,10 @@ export const TASK_TYPE_LABELS: Record<TaskType, string> = {
   email: "Email",
   linkedin: "LinkedIn",
   action_item: "Action item",
+  linkedin_connect: "LinkedIn: send connection request",
+  linkedin_message: "LinkedIn: send message",
+  linkedin_view: "LinkedIn: view profile",
+  linkedin_interact: "LinkedIn: interact with post",
 };
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = { low: "Low", medium: "Medium", high: "High" };
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {

@@ -33,8 +33,12 @@ interface Draft {
 const TYPE_LABELS: Record<StepType, string> = {
   auto_email: "Automatic email",
   manual_email: "Manual email",
-  call: "Call",
-  task: "Task",
+  call: "Phone call",
+  task: "Action item",
+  linkedin_connect: "LinkedIn: send connection request",
+  linkedin_message: "LinkedIn: send message",
+  linkedin_view: "LinkedIn: view profile",
+  linkedin_interact: "LinkedIn: interact with post",
 };
 
 const TYPE_ICONS: Record<StepType, typeof Mail> = {
@@ -42,6 +46,10 @@ const TYPE_ICONS: Record<StepType, typeof Mail> = {
   manual_email: UserPen,
   call: Phone,
   task: SquareCheck,
+  linkedin_connect: SquareCheck,
+  linkedin_message: SquareCheck,
+  linkedin_view: SquareCheck,
+  linkedin_interact: SquareCheck,
 };
 
 const MERGE_FIELDS = [

@@ -85,15 +85,39 @@ export const PERMISSIONS = [
   "branding:update",
   "domain:read",
   "domain:manage",
+  // Apollo-parity additions (docs/reference/apollo-ui.md)
+  "savedsearch:create",
+  "note:create",
+  "note:delete",
+  "template:read",
+  "template:create",
+  "template:update",
+  "template:delete",
+  "schedule:manage",
+  "workflow:read",
+  "workflow:create",
+  "workflow:update",
+  "workflow:delete",
+  "workflow:launch",
+  "pipeline:manage",
+  "stage:manage",
+  "customfield:manage",
+  "persona:manage",
+  "analytics:read",
+  "dashboard:manage",
+  "deliverability:read",
+  "deliverability:manage",
+  "ai:use",
+  "aicontext:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
 
 const READ: Permission[] = PERMISSIONS.filter((p) => p.endsWith(":read")).filter(
-  (p) => p !== "apikey:read" && p !== "audit:read" && p !== "domain:read",
+  (p) => !["apikey:read", "audit:read", "domain:read", "deliverability:read"].includes(p),
 );
 
-const VIEWER: Permission[] = [...READ, "search:run"];
+const VIEWER: Permission[] = [...READ, "search:run", "analytics:read"];
 
 const MEMBER: Permission[] = [
   ...VIEWER,
@@ -118,6 +142,14 @@ const MEMBER: Permission[] = [
   "deal:update",
   "crawler:run",
   "suppression:create",
+  "savedsearch:create",
+  "note:create",
+  "template:create",
+  "template:update",
+  "workflow:create",
+  "workflow:update",
+  "workflow:launch",
+  "ai:use",
 ];
 
 const MANAGER: Permission[] = [
@@ -133,6 +165,13 @@ const MANAGER: Permission[] = [
   "suppression:delete",
   "audit:read",
   "domain:read",
+  "note:delete",
+  "template:delete",
+  "schedule:manage",
+  "workflow:delete",
+  "persona:manage",
+  "dashboard:manage",
+  "deliverability:read",
 ];
 
 const ADMIN: Permission[] = [
@@ -146,6 +185,11 @@ const ADMIN: Permission[] = [
   "workspace:update",
   "branding:update",
   "domain:manage",
+  "pipeline:manage",
+  "stage:manage",
+  "customfield:manage",
+  "deliverability:manage",
+  "aicontext:manage",
 ];
 
 const OWNER: Permission[] = [...ADMIN, "workspace:delete"];

@@ -236,6 +236,10 @@ const TYPE_TITLES: Record<TaskType, string> = {
   email: "Email",
   linkedin: "LinkedIn touch",
   action_item: "Follow up",
+  linkedin_connect: "Send LinkedIn connection request",
+  linkedin_message: "Send LinkedIn message",
+  linkedin_view: "View LinkedIn profile",
+  linkedin_interact: "Interact with LinkedIn post",
 };
 
 async function defaultTitle(actor: Actor, type: TaskType, contactId: string | null | undefined) {
