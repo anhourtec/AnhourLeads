@@ -26,7 +26,7 @@ export function IndexEmptyState({
 }) {
   const noun = entity === "contact" ? "people" : "companies";
   return (
-    <Empty className="m-4 border" data-testid="index-empty">
+    <Empty className="m-4 w-auto border" data-testid="index-empty">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Database aria-hidden="true" />
