@@ -13,6 +13,9 @@ export default defineConfig({
   outputDir: ".playwright-mcp/test-results",
   globalSetup: "./tests/support/global-setup.ts",
   fullyParallel: false,
+  // One shared dev server compiles routes on first hit; under a full parallel run that can take tens of seconds.
+  timeout: 90_000,
+  expect: { timeout: 15_000 },
   workers: 4,
   retries: 0,
   reporter: [["list"], ["html", { outputFolder: ".playwright-mcp/report", open: "never" }]],

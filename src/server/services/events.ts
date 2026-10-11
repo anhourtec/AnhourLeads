@@ -1,8 +1,11 @@
 import "server-only";
 
+import { and, eq } from "drizzle-orm";
+
 import { db, schema } from "@/server/db";
 import { log } from "@/server/log";
 
+import { applyEngageRules } from "./engage-rules";
 import { applyStageTriggers } from "./stage-triggers";
 import { enqueueWorkflowRuns } from "./workflow-engine";
 
@@ -64,10 +67,24 @@ export async function recordEvent(event: RecordEvent): Promise<void> {
       metadata: event.metadata,
       actorUserId: event.actorUserId ?? null,
     });
+    // Keep "last activity" cheap to filter and sort on.
+    const now = new Date();
+    if (event.contactId) {
+      await db
+        .update(schema.contact)
+        .set({ lastActivityAt: now })
+        .where(and(eq(schema.contact.id, event.contactId), eq(schema.contact.organizationId, event.organizationId)));
+    }
+    if (event.companyId) {
+      await db
+        .update(schema.company)
+        .set({ lastActivityAt: now })
+        .where(and(eq(schema.company.id, event.companyId), eq(schema.company.organizationId, event.organizationId)));
+    }
   } catch (error) {
     log.error("activity write failed", { component: "events", type: event.type, error });
   }
-  for (const handler of [applyStageTriggers, enqueueWorkflowRuns]) {
+  for (const handler of [applyStageTriggers, enqueueWorkflowRuns, applyEngageRules]) {
     try {
       await handler(event);
     } catch (error) {

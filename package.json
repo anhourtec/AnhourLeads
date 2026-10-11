@@ -20,7 +20,8 @@
     "test:ui": "playwright test --project=ui-desktop --project=ui-tablet --project=ui-mobile",
     "test": "playwright test",
     "scheduler": "tsx --conditions=react-server scripts/scheduler.ts",
-    "domains:recheck": "tsx --conditions=react-server scripts/domains-recheck.ts"
+    "domains:recheck": "tsx --conditions=react-server scripts/domains-recheck.ts",
+    "crawler": "tsx --conditions=react-server scripts/crawler-worker.ts"
   },
   "lint-staged": {
     "*.{js,mjs,ts,jsx,tsx}": ["biome check --write --no-errors-on-unmatched"]
