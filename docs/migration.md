@@ -8,6 +8,8 @@ Every file in `drizzle/` with what it changes and how safe it is to roll back (C
 | --- | --- | --- | --- | --- |
 | 0000 | `0000_init.sql` | 2026-10-10 | Initial schema | n/a (first) |
 | 0001 | `0001_mailbox_smtp_outbound.sql` | 2026-10-10 | Mailbox SMTP settings, outbound message log | Safe |
+| 0002 | `0002_apollo_parity.sql` | 2026-10-11 | Tables and columns for the Apollo-parity screens | Caution |
+| 0003 | `0003_discovery_index.sql` | 2026-10-11 | Installation-wide discovery index and crawler fleet | Safe |
 
 ## 0000_init
 
@@ -27,3 +29,15 @@ Creates every table:
 - `company.annual_revenue`: integer → bigint (values above 2.1 billion).
 - New table `outbound_message`: every email sent or held for review (status pending_review / queued / sent / failed / bounced / blocked, blocked reason, provider message id, timestamps), indexed by workspace and by mailbox + sent time for daily limits.
 - Rollback: Safe. Dropping the new columns and table loses stored SMTP settings and send history only.
+
+## 0002_apollo_parity
+
+- New tables: `saved_search`, `saved_view`, `note`, `activity` (record timeline), `custom_field`, `persona`, `record_stage` (stage labels and protection), `stage_trigger`, `pipeline`, `pipeline_stage`, `sending_schedule`, `step_variant`, `email_template`, `snippet`, `workflow`, `workflow_run`, `notification`, `onboarding_state`, `sending_policy`, `sending_domain`, `enrichment_job`, `dashboard`, `ai_context`, `ai_chat`, `ai_message`.
+- `company`: `last_activity_at`, `custom_fields` (jsonb). `contact`: `persona_id`, `last_activity_at`, `custom_fields`; stage values `bad_data`, `changed_job` added.
+- `mailbox`: `signature`, `warmup_started_at`. `sequence`: `description`, `tags`, `owner_id`, `starred`, `schedule_id`, `cc`, `bcc`, `max_per_24h`, `ruleset` (jsonb). `sequence_step`: `wait_minutes`, `enabled`, `thread_mode`; LinkedIn step types. `outbound_message`: `variant_id`. `task`: `deal_id`, `enrollment_id`; LinkedIn task types. `deal`: `pipeline_id`, `stage_id`, `custom_fields`.
+- Rollback: **Caution.** Additive, but older code doesn't know the new stage, step and task values (`bad_data`, `changed_job`, `linkedin_*`) that rows may now hold.
+
+## 0003_discovery_index
+
+- New tables: `index_company`, `index_person`, `index_job_posting`, `index_news` (installation-wide index built from public sources), `crawl_host` (politeness and robots.txt cache), `crawl_frontier` (URL queue), `seed_source`, `index_optout` (opt-outs and removal requests).
+- Rollback: Safe. Dropping them loses the crawled index only; workspace data is untouched.

@@ -50,6 +50,16 @@ Installation (platform administrators)
 | `apikey:read`, `apikey:create`, `apikey:revoke` | ✓ | ✓ | | | |
 | `workspace:update`, `branding:update`, `domain:manage` | ✓ | ✓ | | | |
 | `workspace:delete` | ✓ | | | | |
+| `analytics:read` (dashboards, reports) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `savedsearch:create`, `note:create` | ✓ | ✓ | ✓ | ✓ | |
+| `template:create`, `template:update` (email templates and snippets; `template:read` for everyone) | ✓ | ✓ | ✓ | ✓ | |
+| `workflow:create`, `workflow:update`, `workflow:launch` (`workflow:read` for everyone) | ✓ | ✓ | ✓ | ✓ | |
+| `ai:use` (AI assistant, AI-assisted drafts) | ✓ | ✓ | ✓ | ✓ | |
+| `note:delete` (any note; authors can always delete their own), `template:delete`, `workflow:delete` | ✓ | ✓ | ✓ | | |
+| `schedule:manage` (sending schedules), `persona:manage`, `dashboard:manage` | ✓ | ✓ | ✓ | | |
+| `deliverability:read` (email setup and health) | ✓ | ✓ | ✓ | | |
+| `pipeline:manage`, `stage:manage` (deal pipelines, contact stages and triggers) | ✓ | ✓ | | | |
+| `customfield:manage`, `deliverability:manage` (sending protection, sending domains), `aicontext:manage` | ✓ | ✓ | | | |
 
 Adding to the do-not-contact list is open to members on purpose: honouring an opt-out should never wait for a manager. Removing an entry is a manager decision.
 
@@ -72,13 +82,25 @@ Adding to the do-not-contact list is open to members on purpose: honouring an op
 | Enrich an organization when that starts a new crawl | `enrich:run` + `crawler:run` |
 | Erase everything held about an email (privacy request) | `contact:delete` + `suppression:create` |
 
+## Other rules added with the Apollo-parity screens
+
+- **Workflows run as their owner.** Launching makes the launcher the owner; every run re-checks that the owner still holds `workflow:launch` and each action's own permission, and fails with a plain message otherwise.
+- **Anti-spam acknowledgement.** People who went through onboarding must accept it before creating their first sequence (409 until they do).
+- **Turning off bounce protection** on a sequence needs manager or above.
+- **Private templates and snippets** are visible only to their owner (404 for everyone else).
+- **AI chats** are private to their author; another person's chat id answers 404.
+- **Usage:** everyone sees their own usage; the per-person breakdown needs `audit:read`.
+- **Discovery index:** searching it needs `search:run`; saving people or companies into the workspace needs `contact:create` / `company:create`; "Access email" also needs `enrich:run`.
+
 ## Platform administrators
 
-Only users with the platform role can open the Platform screen and `/api/v1/platform/**` (all workspaces, member counts, hostnames, and each workspace's custom-hostname limit, 0 to 50). Everyone else, including every API key, gets 403 from the API and a 404 page.
+Only users with the platform role can open the Platform screen and `/api/v1/platform/**` (all workspaces, member counts, hostnames, and each workspace's custom-hostname limit, 0 to 50). Everyone else, including every API key, gets 403 from the API and a 404 page. Platform administrators also run the data pipeline (Platform → Data: seed sources, crawl queue, hosts, opt-outs and removal requests, retention). The public removal page `/privacy/removal` needs no account.
 
 ## Navigation
 
-The sidebar (`src/navigation/sidebar/sidebar-items.ts`, `navFor`) shows only screens the role can open; each item carries the permission it needs. Pages check the same permission on the server and render not-found when it's missing, so a hidden link can't be opened by URL.
+The sidebar (`src/navigation/sidebar/sidebar-items.ts`, `navFor`) shows only screens the role can open; each item carries the permission it needs. The settings sidebar, the settings overview and the command palette's settings results do the same from `src/navigation/settings/settings-items.ts` (`settingsFor`). Pages check the same permission on the server and render not-found when it's missing, so a hidden link can't be opened by URL.
+
+Personal endpoints: `/api/v1/notifications` (and `/read`) and `/api/v1/onboarding` act only on the signed-in person's own rows, for every role; someone else's notification id answers 404, and API keys get 403 (there is no person behind a key). `/api/v1/activities` is open to every member of the workspace. `/api/v1/search` needs `search:run`, and only returns people with `contact:read`, companies with `company:read` and settings pages the role may open. Viewers skip onboarding.
 
 ---
 
@@ -88,3 +110,5 @@ The sidebar (`src/navigation/sidebar/sidebar-items.ts`, `navFor`) shows only scr
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created: five workspace roles, platform administrators, API keys, matrix and guard rails |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Combined-permission actions, key revoke and workspace delete rails, platform screen |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Apollo-parity permissions, workflow, consent and AI rules, data pipeline administration |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Settings navigation filtering, personal endpoints (notifications, onboarding), search scope |

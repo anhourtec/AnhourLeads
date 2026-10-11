@@ -114,6 +114,7 @@ Paths follow Apollo's resource names so the model is familiar (`docs/reference/a
 | Pipeline | `tasks` (CRUD, `search`, `bulk_create`, `[id]/complete`, `[id]/skip`), `opportunities` (CRUD, `search`), `opportunity_stages` |
 | Compliance | `suppressions` (list, add, `bulk`, delete, `check`), `privacy/erase`, `privacy/export` |
 | Workspace | `users` (`search`, `api_profile`, `invite`, `invitations`, `[userId]`), `api_keys`, `audit_logs`, `workspace`, `workspace/branding`, `domains` (+ `verify`), `overview`, `workspaces/register` |
+| Shell | `search` (⌘K: people, companies, settings pages), `notifications` (+ `read`), `activities`, `onboarding` (GET / POST start / PATCH) |
 | Platform | `platform/workspaces` (platform administrators only) |
 
 ## Backend modules (`src/server/`)
@@ -192,6 +193,9 @@ organization (workspace, brand, hostname_limit) ─┬─ member ── user ─
 | `domains` | 5 min | Pending hostnames every run until verified or expired (7 days); live ones at most hourly; failing → off after grace; Redis lock per hostname |
 | `crawl` | 5 min | Picks up queued crawl jobs and ones stuck in running (new jobs also start right after the request via `after()`) |
 | `sequences` | 60 s | The sending engine above |
+| `workflows` | 60 s | Scheduled workflow triggers and resuming waiting runs |
+| `enrichment` | 120 s | Queued enrichment jobs, automation, stale sending-domain DNS checks |
+| `discovery` | 5 min | Seed sources, re-queueing stale pages, lease recovery, retention |
 
 `npm run scheduler` runs them all (`SCHEDULER_JOBS` limits which); it touches a heartbeat file for the container healthcheck. Health: `GET /api/health` (liveness, no dependencies) and `GET /api/health/ready` (Postgres, Redis; 503 when down).
 
@@ -217,8 +221,30 @@ Both use `playwright.config.ts`; the global setup reseeds the database once per 
 
 ---
 
+## Apollo-parity layer (2026-10-11)
+
+The screens follow the Apollo reference in [reference/apollo-ui.md](./reference/apollo-ui.md); only the colours differ. What was added and where it lives:
+
+| Area | Server | API (`/api/v1`) | Screens (`/dashboard`) |
+| --- | --- | --- | --- |
+| Shell, search, notifications, onboarding | `services/{global-search,notifications,onboarding,home}.ts` | `search`, `notifications`, `activities`, `onboarding` | sidebar groups, top bar (⌘K, bell, avatar menu), `home`, `onboarding-hub`, `/onboarding`, settings shell `settings/*` |
+| Search & records | `services/search-filters.ts` (one filter model for search, saved searches, dynamic lists; Total / Net new / Saved counts; facets), `lib/search/nl-parser.ts` | `mixed_people/*`, `mixed_companies/*`, `saved_searches`, `notes`, `custom_fields`, `personas`, `contacts/import/*`, `accounts/import/*` | `people`, `companies`, `saved/*`, `lists`, `import`, contact and company pages |
+| Engage | `services/{sending,sending-guards,engage-rules,schedules,templates,emails,tracking,consents}.ts` | `emailer_campaigns/*`, `emailer_messages/*`, `emailer_schedules`, `email_templates`, `snippets`, `consents/anti-spam`, `tasks/*` | `sequences`, `emails`, `tasks`, `settings/{schedules,templates}` |
+| Deals, stages, workflows | `services/{pipelines,deals,record-stages,stage-triggers,workflows,workflow-engine,workflow-runner}.ts` | `pipelines`, `opportunities/*`, `record_stages`, `stage_triggers`, `workflows/*`, `workflow_templates` | `deals`, `workflows`, `settings/{pipelines,contact-stages}` |
+| Data, deliverability, analytics, AI | `services/{enrichment-jobs,data-health,sending-domains,sending-policy,deliverability,analytics,dashboards,usage,ai}.ts` | `enrichment_jobs`, `data_health`, `duplicates`, `sending_domains`, `sending_policy`, `deliverability/*`, `analytics/query`, `dashboards`, `usage`, `ai/*` | `enrichment`, `analytics`, `assistant`, `settings/{deliverability,usage,ai-context}` |
+| Discovery index & crawler fleet | `server/discovery/*`, `crawler/fleet/*`, `services/discovery.ts` | `index/*`, `platform/{seed_sources,crawler,optouts}` | `platform/data`, public `/privacy/removal` |
+
+**Event hub.** `services/events.ts` → `recordEvent()` is the single entry point for record events (email sent/opened/replied/bounced/unsubscribed, stage changes, list and sequence membership, tasks, calls, notes, deals). It writes the `activity` timeline row, updates `last_activity_at`, then runs the handlers: contact-stage triggers (`stage-triggers.ts`), workflow enrollment (`workflow-engine.ts`) and sequence ruleset reactions (`engage-rules.ts`). Handlers never throw into the caller.
+
+**Workflow engine.** `workflow-engine.ts` only enrolls (one active run per workflow and record, advisory lock); execution lives in `workflow-runner.ts`, which registers itself when loaded (routes, pages, the scheduler job), avoiding an import cycle through the event hub. Runs act with the owner's permissions, re-checked every pass; delays set `resume_at` and the `workflows` job resumes them; webhooks are https-only, SSRF-guarded and signed (`x-anhour-signature`).
+
+**Sending protection.** The sending engine reads the workspace `sending_policy` (restrict unverified / catch-all, require signature, gradual ramp-up, bounce guard, workspace daily limit) and holds messages as `blocked` with a `Policy: …` reason; installation-wide opt-outs (`index_optout`) count as suppression in every workspace.
+
+**Discovery index.** An installation-wide index of companies, people, job postings and news built only from public sources (Wikidata CC0, domain lists, sitemaps, public job-board APIs) by the crawler fleet (`npm run crawler`, `--scale crawler=N`; `FOR UPDATE SKIP LOCKED` frontier, one request per host at a time, robots.txt, deny-list for walled gardens). Workspaces search it and copy rows in with provenance; private workspace data never flows into it. Details: [data-pipeline.md](./data-pipeline.md).
+
 ## Document history
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created: system overview, layout, request flow, API, backend modules, data model, tenancy, engine, frontend, jobs, security, testing |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Apollo-parity layer, event hub, workflow engine, sending protection, discovery index |
