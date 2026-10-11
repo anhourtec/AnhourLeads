@@ -1,8 +1,8 @@
 import { LIMITS } from "@/server/http/rate-limit";
 import { route } from "@/server/http/route";
-import { sendMessageNow } from "@/server/services/sending";
+import { sendMessageNow } from "@/server/services/emails";
 
-/** Send a held, queued or failed message immediately. Compliance checks and the daily limit still apply. */
+/** Send a held, queued or failed message immediately. Compliance checks, policies and the daily limit still apply. */
 export const POST = route<{ id: string }>(
   async ({ actor, params }) => {
     const { message } = await sendMessageNow(actor, params.id);

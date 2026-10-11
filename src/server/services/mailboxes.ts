@@ -97,6 +97,7 @@ const fields = {
   smtpUser: optionalText(254),
   smtpPassword: z.string().max(500).nullish(),
   postalAddress: optionalText(500),
+  signature: optionalText(2000),
 };
 
 export const createMailboxSchema = z
@@ -115,6 +116,7 @@ export const createMailboxSchema = z
     smtpUser: fields.smtpUser,
     smtpPassword: fields.smtpPassword,
     postalAddress: fields.postalAddress,
+    signature: fields.signature,
   })
   .strict();
 
@@ -135,6 +137,7 @@ export const updateMailboxSchema = z
     /** Empty string or null clears the stored password; omit to keep it. */
     smtpPassword: fields.smtpPassword,
     postalAddress: fields.postalAddress,
+    signature: fields.signature,
   })
   .partial()
   .strict();
@@ -164,6 +167,8 @@ export interface MailboxView {
   hasPassword: boolean;
   passwordHint: string | null;
   postalAddress: string | null;
+  signature: string | null;
+  warmupStartedAt: string | null;
   /** Plain-language problems that stop or hurt sending from this mailbox. */
   issues: string[];
   readyToSend: boolean;
@@ -253,6 +258,8 @@ function toView(row: MailboxRow, sentToday: number, activeSequences: number): Ma
     hasPassword: Boolean(row.smtpPasswordEnc),
     passwordHint: secretHint(plain),
     postalAddress: row.postalAddress,
+    signature: row.signature,
+    warmupStartedAt: row.warmupStartedAt?.toISOString() ?? null,
     issues,
     readyToSend: issues.length === 0,
     activeSequences,
@@ -327,6 +334,8 @@ export async function createMailbox(actor: Actor, input: unknown): Promise<Mailb
       smtpPasswordEnc: smtpPassword ? encryptSecret(smtpPassword) : null,
       organizationId: actor.organizationId,
       userId: actor.userId,
+      // New mailboxes start their ramp-up now (used when the gradual sending policy is on).
+      warmupStartedAt: new Date(),
     })
     .returning();
   await audit(actor, "mailbox.create", "mailbox", row.id, { email: row.email, provider: row.provider });

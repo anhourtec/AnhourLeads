@@ -10,8 +10,9 @@ import { MailboxList } from "./_components/mailbox-list";
 
 export const metadata: Metadata = { title: "Mailboxes" };
 
-export default async function MailboxesPage() {
+export default async function MailboxesPage({ searchParams }: PageProps<"/dashboard/mailboxes">) {
   const { actor } = await pageActor("mailbox:read");
+  const openNew = (await searchParams).new === "1";
   const mailboxes = await listMailboxes(actor);
   const permissions = {
     create: can(actor.role, "mailbox:create"),
@@ -24,7 +25,7 @@ export default async function MailboxesPage() {
       <PageHeader
         title="Mailboxes"
         description="The addresses sequences send from. Each one has a daily limit, a sending window and the sender details every message must carry."
-        actions={permissions.create ? <MailboxDialog mode="create" /> : null}
+        actions={permissions.create ? <MailboxDialog mode="create" defaultOpen={openNew} /> : null}
       />
       <MailboxList mailboxes={mailboxes} permissions={permissions} />
     </div>

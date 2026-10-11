@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, or, type SQL, sql
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
+import { CALL_OUTCOME_LABELS, CALL_OUTCOMES } from "@/lib/engage-constants";
 import {
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -18,6 +19,7 @@ import { HttpError, notFound } from "@/server/http/errors";
 import type { Page } from "@/server/http/route";
 
 import { audit } from "./audit";
+import { emitEvent as recordEvent } from "./engage-events";
 import {
   assertCompanyInScope,
   assertWorkspaceMember,
@@ -37,6 +39,9 @@ const oneOrMany = <T extends readonly [string, ...string[]]>(values: T) =>
 export const taskSearchSchema = z.object({
   /** Only tasks assigned to the acting user. */
   mine: z.boolean().optional(),
+  /** Tab shortcut: call, email, linkedin (every LinkedIn type) or overdue (open and past due). */
+  tab: z.enum(["all", "call", "email", "linkedin", "overdue"]).optional(),
+  dealId: refId.optional(),
   assigneeId: refId.optional(),
   status: oneOrMany(TASK_STATUSES).optional(),
   type: oneOrMany(TASK_TYPES).optional(),
@@ -46,7 +51,7 @@ export const taskSearchSchema = z.object({
   dueAfter: dateInput.optional(),
   dueBefore: dateInput.optional(),
   q: z.string().trim().max(200).optional(),
-  sort: z.enum(["due_at", "priority", "created_at"]).optional(),
+  sort: z.enum(["due_at", "priority", "created_at", "title"]).optional(),
   page: z.union([z.number(), z.string()]).optional(),
   per_page: z.union([z.number(), z.string()]).optional(),
 });
@@ -60,6 +65,7 @@ const taskFields = {
   companyId: refId.nullable(),
   note: z.string().trim().max(5000).nullable(),
   dueAt: dateInput.nullable(),
+  dealId: refId.nullable(),
 };
 
 export const taskCreateSchema = z.object({
@@ -71,10 +77,11 @@ export const taskCreateSchema = z.object({
   companyId: taskFields.companyId.optional(),
   note: taskFields.note.optional(),
   dueAt: taskFields.dueAt.optional(),
+  dealId: taskFields.dealId.optional(),
 });
 
 export const taskBulkCreateSchema = taskCreateSchema
-  .omit({ contactId: true, companyId: true })
+  .omit({ contactId: true, companyId: true, dealId: true })
   .extend({ contactIds: z.array(refId).min(1).max(500) });
 
 export const taskUpdateSchema = z
@@ -88,6 +95,7 @@ export const taskUpdateSchema = z
     companyId: taskFields.companyId.optional(),
     note: taskFields.note.optional(),
     dueAt: taskFields.dueAt.optional(),
+    dealId: taskFields.dealId.optional(),
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), { message: "Nothing to update." });
 
@@ -116,6 +124,11 @@ const taskColumns = {
   contactEmail: schema.contact.email,
   companyId: schema.task.companyId,
   companyName: schema.company.name,
+  dealId: schema.task.dealId,
+  enrollmentId: schema.task.enrollmentId,
+  contactPhone: schema.contact.phone,
+  contactTitle: schema.contact.title,
+  contactLinkedin: schema.contact.linkedinUrl,
 };
 
 type TaskJoinedRow = Awaited<ReturnType<typeof baseQuery>>[number];
@@ -133,8 +146,18 @@ export interface TaskDto {
   updatedAt: string;
   createdById: string | null;
   assignee: { id: string; name: string; email: string } | null;
-  contact: { id: string; name: string; email: string | null } | null;
+  contact: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    title: string | null;
+    linkedinUrl: string | null;
+  } | null;
   company: { id: string; name: string } | null;
+  dealId: string | null;
+  enrollmentId: string | null;
+  overdue: boolean;
 }
 
 function toDto(row: TaskJoinedRow): TaskDto {
@@ -156,9 +179,19 @@ function toDto(row: TaskJoinedRow): TaskDto {
         ? { id: row.assigneeId, name: row.assigneeName, email: row.assigneeEmail }
         : null,
     contact: row.contactId
-      ? { id: row.contactId, name: contactName || row.contactEmail || "Unnamed contact", email: row.contactEmail }
+      ? {
+          id: row.contactId,
+          name: contactName || row.contactEmail || "Unnamed contact",
+          email: row.contactEmail,
+          phone: row.contactPhone,
+          title: row.contactTitle,
+          linkedinUrl: row.contactLinkedin,
+        }
       : null,
     company: row.companyId && row.companyName ? { id: row.companyId, name: row.companyName } : null,
+    dealId: row.dealId,
+    enrollmentId: row.enrollmentId,
+    overdue: row.status === "open" && Boolean(row.dueAt && row.dueAt.getTime() < Date.now()),
   };
 }
 
@@ -175,6 +208,75 @@ const PRIORITY_ORDER = sql`case ${schema.task.priority} when 'high' then 0 when 
 
 export type TaskSearch = z.infer<typeof taskSearchSchema>;
 
+export const LINKEDIN_TASK_TYPES = [
+  "linkedin",
+  "linkedin_connect",
+  "linkedin_message",
+  "linkedin_view",
+  "linkedin_interact",
+] as const satisfies readonly TaskType[];
+
+type TaskTab = "call" | "email" | "linkedin" | "overdue";
+
+function tabWhere(tab: TaskTab): SQL {
+  if (tab === "call") return eq(schema.task.type, "call");
+  if (tab === "email") return eq(schema.task.type, "email");
+  if (tab === "linkedin") return inArray(schema.task.type, [...LINKEDIN_TASK_TYPES]);
+  return and(eq(schema.task.status, "open"), lte(schema.task.dueAt, new Date())) as SQL;
+}
+
+export const taskCountsSchema = z.object({
+  mine: z.boolean().optional(),
+  assigneeId: refId.optional(),
+  status: oneOrMany(TASK_STATUSES).optional(),
+});
+
+export interface TaskCounts {
+  all: number;
+  call: number;
+  email: number;
+  linkedin: number;
+  overdue: number;
+}
+
+/** Counts for the tabs. Overdue counts open tasks past due whatever the status filter. */
+export async function taskCounts(actor: Actor, input: z.infer<typeof taskCountsSchema>): Promise<TaskCounts> {
+  const where: SQL[] = [eq(schema.task.organizationId, actor.organizationId)];
+  if (input.mine) {
+    if (!actor.userId) return { all: 0, call: 0, email: 0, linkedin: 0, overdue: 0 };
+    where.push(eq(schema.task.assigneeId, actor.userId));
+  }
+  if (input.assigneeId) where.push(eq(schema.task.assigneeId, input.assigneeId));
+  const t = schema.task;
+  const status = input.status
+    ? sql`${t.status} in (${sql.join(
+        input.status.map((v) => sql`${v}`),
+        sql`, `,
+      )})`
+    : sql`true`;
+  const linkedin = sql.join(
+    LINKEDIN_TASK_TYPES.map((v) => sql`${v}`),
+    sql`, `,
+  );
+  const [row] = await db
+    .select({
+      all: sql<number>`count(*) filter (where ${status})::int`,
+      call: sql<number>`count(*) filter (where ${status} and ${t.type} = 'call')::int`,
+      email: sql<number>`count(*) filter (where ${status} and ${t.type} = 'email')::int`,
+      linkedin: sql<number>`count(*) filter (where ${status} and ${t.type} in (${linkedin}))::int`,
+      overdue: sql<number>`count(*) filter (where ${t.status} = 'open' and ${t.dueAt} <= now())::int`,
+    })
+    .from(t)
+    .where(and(...where));
+  return {
+    all: Number(row?.all ?? 0),
+    call: Number(row?.call ?? 0),
+    email: Number(row?.email ?? 0),
+    linkedin: Number(row?.linkedin ?? 0),
+    overdue: Number(row?.overdue ?? 0),
+  };
+}
+
 export async function searchTasks(actor: Actor, input: TaskSearch, page: Page) {
   const where: SQL[] = [eq(schema.task.organizationId, actor.organizationId)];
   if (input.mine) {
@@ -182,6 +284,8 @@ export async function searchTasks(actor: Actor, input: TaskSearch, page: Page) {
     where.push(eq(schema.task.assigneeId, actor.userId));
   }
   if (input.assigneeId) where.push(eq(schema.task.assigneeId, input.assigneeId));
+  if (input.tab && input.tab !== "all") where.push(tabWhere(input.tab));
+  if (input.dealId) where.push(eq(schema.task.dealId, input.dealId));
   if (input.status) where.push(inArray(schema.task.status, input.status));
   if (input.type) where.push(inArray(schema.task.type, input.type));
   if (input.priority) where.push(inArray(schema.task.priority, input.priority));
@@ -199,6 +303,7 @@ export async function searchTasks(actor: Actor, input: TaskSearch, page: Page) {
   const orders: Record<string, SQL[]> = {
     priority: [asc(PRIORITY_ORDER), asc(schema.task.dueAt)],
     created_at: [desc(schema.task.createdAt)],
+    title: [asc(schema.task.title)],
   };
   const order = orders[input.sort ?? ""] ?? [sql`${schema.task.dueAt} asc nulls last`, desc(schema.task.createdAt)];
 
@@ -268,6 +373,7 @@ export async function createTask(actor: Actor, input: z.infer<typeof taskCreateS
     companyId ??= contact.companyId;
   }
   if (input.companyId) await assertCompanyInScope(actor, input.companyId, "companyId");
+  if (input.dealId) await assertDealInScope(actor, input.dealId);
 
   const [created] = await db
     .insert(schema.task)
@@ -281,11 +387,23 @@ export async function createTask(actor: Actor, input: z.infer<typeof taskCreateS
       title: input.title ?? (await defaultTitle(actor, input.type, input.contactId)),
       note: input.note ?? null,
       dueAt: input.dueAt ?? null,
+      dealId: input.dealId ?? null,
       createdById: actor.userId,
     })
     .returning({ id: schema.task.id });
   await audit(actor, "task.create", "task", created.id, { type: input.type, assigneeId });
-  return getTask(actor, created.id);
+  const task = await getTask(actor, created.id);
+  await recordEvent({
+    organizationId: actor.organizationId,
+    type: "task_created",
+    summary: `Task created: ${task.title}`,
+    contactId: task.contact?.id ?? null,
+    companyId: task.company?.id ?? null,
+    dealId: task.dealId,
+    actorUserId: actor.userId,
+    metadata: { taskId: task.id, type: task.type },
+  });
+  return task;
 }
 
 export async function bulkCreateTasks(actor: Actor, input: z.infer<typeof taskBulkCreateSchema>): Promise<TaskDto[]> {
@@ -337,6 +455,7 @@ export async function updateTask(actor: Actor, id: string, input: z.infer<typeof
   if (input.assigneeId) await assertWorkspaceMember(actor, input.assigneeId, "assigneeId");
   if (input.contactId) await contactInScope(actor, input.contactId, "contactId");
   if (input.companyId) await assertCompanyInScope(actor, input.companyId, "companyId");
+  if (input.dealId) await assertDealInScope(actor, input.dealId);
 
   const statusChange =
     input.status && input.status !== current.status
@@ -353,6 +472,7 @@ export async function updateTask(actor: Actor, id: string, input: z.infer<typeof
       ...(input.companyId !== undefined && { companyId: input.companyId }),
       ...(input.note !== undefined && { note: input.note }),
       ...(input.dueAt !== undefined && { dueAt: input.dueAt }),
+      ...(input.dealId !== undefined && { dealId: input.dealId }),
       ...statusChange,
     })
     .where(and(eq(schema.task.organizationId, actor.organizationId), eq(schema.task.id, id)));
@@ -380,7 +500,117 @@ export async function resolveTask(
     .returning({ id: schema.task.id });
   if (!updated) throw new HttpError(422, "This task was already closed.");
   await audit(actor, outcome === "completed" ? "task.complete" : "task.skip", "task", id);
-  return getTask(actor, id);
+  const task = await getTask(actor, id);
+  if (outcome === "completed") {
+    await recordEvent({
+      organizationId: actor.organizationId,
+      type: "task_completed",
+      summary: `Task completed: ${task.title}`,
+      contactId: task.contact?.id ?? null,
+      companyId: task.company?.id ?? null,
+      dealId: task.dealId,
+      actorUserId: actor.userId,
+      metadata: { taskId: task.id, type: task.type },
+    });
+  }
+  return task;
+}
+
+export const logCallSchema = z
+  .object({ outcome: z.enum(CALL_OUTCOMES), note: z.string().trim().max(5000).optional() })
+  .strict();
+
+/**
+ * Call session: record how a call went (no telephony; the person dialled themselves), complete the
+ * task and log a call_logged event on the contact's timeline.
+ */
+export async function logCall(actor: Actor, id: string, input: z.infer<typeof logCallSchema>): Promise<TaskDto> {
+  const current = await rawTask(actor, id);
+  if (current.status !== "open") throw new HttpError(422, `This task is already ${current.status}.`);
+  const label = CALL_OUTCOME_LABELS[input.outcome];
+  const note = [`Call outcome: ${label}`, input.note].filter(Boolean).join("\n");
+  const task = await resolveTask(actor, id, "completed", note);
+  await recordEvent({
+    organizationId: actor.organizationId,
+    type: "call_logged",
+    summary: `Call logged: ${label}`,
+    contactId: task.contact?.id ?? null,
+    companyId: task.company?.id ?? null,
+    dealId: task.dealId,
+    actorUserId: actor.userId,
+    metadata: { taskId: task.id, outcome: input.outcome, note: input.note ?? null },
+  });
+  return task;
+}
+
+async function assertDealInScope(actor: Actor, dealId: string): Promise<void> {
+  const [row] = await db
+    .select({ id: schema.deal.id })
+    .from(schema.deal)
+    .where(and(eq(schema.deal.organizationId, actor.organizationId), eq(schema.deal.id, dealId)))
+    .limit(1);
+  if (!row) throw invalidReference("dealId", "Deal not found.");
+}
+
+export const associationQuerySchema = z.object({ q: z.string().trim().max(200).default("") });
+
+export interface TaskAssociation {
+  kind: "contact" | "company";
+  id: string;
+  name: string;
+  detail: string | null;
+  companyId: string | null;
+}
+
+/** "Associated with" search across contacts and companies for the new-task form. */
+export async function searchAssociations(actor: Actor, q: string): Promise<TaskAssociation[]> {
+  const term = `%${q.replace(/[%_\\]/g, "\\$&")}%`;
+  const contacts = await db
+    .select({
+      id: schema.contact.id,
+      firstName: schema.contact.firstName,
+      lastName: schema.contact.lastName,
+      email: schema.contact.email,
+      title: schema.contact.title,
+      companyId: schema.contact.companyId,
+      companyName: schema.company.name,
+    })
+    .from(schema.contact)
+    .leftJoin(schema.company, eq(schema.company.id, schema.contact.companyId))
+    .where(
+      and(
+        eq(schema.contact.organizationId, actor.organizationId),
+        q
+          ? or(
+              ilike(schema.contact.email, term),
+              sql`(coalesce(${schema.contact.firstName}, '') || ' ' || coalesce(${schema.contact.lastName}, '')) ilike ${term}`,
+            )
+          : undefined,
+      ),
+    )
+    .orderBy(asc(schema.contact.firstName), asc(schema.contact.id))
+    .limit(8);
+  const companies = await db
+    .select({ id: schema.company.id, name: schema.company.name, domain: schema.company.domain })
+    .from(schema.company)
+    .where(
+      and(
+        eq(schema.company.organizationId, actor.organizationId),
+        q ? or(ilike(schema.company.name, term), ilike(schema.company.domain, term)) : undefined,
+      ),
+    )
+    .orderBy(asc(schema.company.name), asc(schema.company.id))
+    .limit(6);
+  return [
+    ...contacts.map((c) => ({
+      kind: "contact" as const,
+      id: c.id,
+      name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email || "Unnamed contact",
+      detail: [c.title, c.companyName].filter(Boolean).join(" · ") || c.email,
+      companyId: c.companyId,
+    })),
+    ...companies.map((c) => ({ kind: "company" as const, id: c.id, name: c.name, detail: c.domain, companyId: c.id })),
+  ];
 }
 
 export async function deleteTask(actor: Actor, id: string): Promise<void> {

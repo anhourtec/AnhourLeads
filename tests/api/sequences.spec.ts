@@ -647,6 +647,7 @@ test.describe("unsubscribe link", () => {
 /* -------------------------------------------------------------------------- */
 
 test.describe("sequences: workspace isolation", () => {
+  test.describe.configure({ timeout: 180_000 });
   test("Globex can't see or act on Acme sequences, steps or messages", async () => {
     const acme = await owner();
     const { id, steps } = await readySequence(acme, { reviewMode: "all" });

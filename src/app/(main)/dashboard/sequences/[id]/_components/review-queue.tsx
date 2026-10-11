@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import type { MessageView } from "@/server/services/sending";
+import type { MessageView } from "@/server/services/emails";
 
 import { MessageStatusPill } from "../../../_components/engage/tone-pill";
 import { apiRequest } from "../../../_components/records/api-client";

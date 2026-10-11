@@ -1,6 +1,7 @@
 import { expect as baseExpect, test } from "@playwright/test";
 
 import { can, ROLES } from "../../src/lib/rbac/permissions";
+import { createContact } from "../api/_engage";
 import { ACME } from "../support/session";
 import { expectNoHorizontalOverflow, openAs, shot, uid } from "./admin-ui";
 
@@ -15,10 +16,10 @@ test.describe("tasks screen", () => {
         const res = await page.goto("/dashboard/tasks?view=all&status=any");
         expect(res?.status()).toBe(200);
         await expect(page.getByRole("heading", { level: 1, name: "Tasks" })).toBeVisible();
-        await expect(page.getByRole("tab", { name: "All tasks" })).toHaveAttribute("data-state", "active");
-        const newTask = page.getByRole("button", { name: "New task" }).first();
+        await expect(page.getByRole("tab", { name: /^All tasks/ }).first()).toHaveAttribute("data-state", "active");
+        const newTask = page.getByRole("button", { name: "Create task" }).first();
         if (can(role, "task:create")) await expect(newTask).toBeVisible();
-        else await expect(page.getByRole("button", { name: "New task" })).toHaveCount(0);
+        else await expect(page.getByRole("button", { name: "Create task" })).toHaveCount(0);
         if (!can(role, "task:update")) await expect(page.getByRole("button", { name: /^Complete / })).toHaveCount(0);
         await expectNoHorizontalOverflow(page);
         expect(errors).toEqual([]);
@@ -30,11 +31,19 @@ test.describe("tasks screen", () => {
 
   test("a member creates a task, finds it, and completes it", async ({ browser }, info) => {
     const title = `UI task ${uid()}`;
+    const contactName = `Tess${uid()}`;
+    await createContact("acme", { firstName: contactName });
     const { context, page, errors } = await openAs(browser, ACME.member, { dark: info.project.name === "ui-mobile" });
     try {
       await page.goto("/dashboard/tasks");
-      await page.getByRole("button", { name: "New task" }).first().click();
+      await page.getByRole("button", { name: "Create task" }).first().click();
       const dialog = page.getByRole("dialog", { name: "New task" });
+      await dialog.getByRole("combobox", { name: /Associated with/ }).click();
+      await page.getByPlaceholder("Search contacts and companies").fill(contactName);
+      await page
+        .getByRole("option", { name: new RegExp(contactName) })
+        .first()
+        .click();
       await dialog.getByLabel("Title").fill(title);
       await dialog.getByLabel("Priority").selectOption("high");
       await dialog.getByLabel("Due date").fill("2030-01-15");
@@ -54,6 +63,7 @@ test.describe("tasks screen", () => {
         .filter({ visible: true })
         .click();
       await expect(page.getByText(title).filter({ visible: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "Show filters" }).click();
       await page.getByLabel("Status").selectOption("completed");
       await expect(page.getByText(title).filter({ visible: true })).toBeVisible();
       expect(errors).toEqual([]);

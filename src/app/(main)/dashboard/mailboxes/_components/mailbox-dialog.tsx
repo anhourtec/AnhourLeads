@@ -44,6 +44,7 @@ interface FormState {
   smtpPassword: string;
   clearPassword: boolean;
   postalAddress: string;
+  signature: string;
 }
 
 function initial(mailbox?: Mailbox): FormState {
@@ -63,6 +64,7 @@ function initial(mailbox?: Mailbox): FormState {
     smtpPassword: "",
     clearPassword: false,
     postalAddress: mailbox?.postalAddress ?? "",
+    signature: mailbox?.signature ?? "",
   };
 }
 
@@ -75,9 +77,18 @@ function timeZones(): string[] {
 }
 
 /** Add or edit a mailbox. The SMTP password is write-only: it's never shown, only replaced or cleared. */
-export function MailboxDialog({ mode, mailbox }: { mode: "create" | "edit"; mailbox?: Mailbox }) {
+export function MailboxDialog({
+  mode,
+  mailbox,
+  defaultOpen = false,
+}: {
+  mode: "create" | "edit";
+  mailbox?: Mailbox;
+  /** Open on first render (the "Link mailbox" links use /dashboard/mailboxes?new=1). */
+  defaultOpen?: boolean;
+}) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [form, setForm] = useState<FormState>(() => initial(mailbox));
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -103,6 +114,7 @@ export function MailboxDialog({ mode, mailbox }: { mode: "create" | "edit"; mail
       smtpSecure: form.smtpSecure,
       smtpUser: form.smtpUser.trim() || null,
       postalAddress: form.postalAddress.trim() || null,
+      signature: form.signature.trim() || null,
     };
     if (mode === "edit") body.status = form.status;
     if (form.smtpPassword) body.smtpPassword = form.smtpPassword;
@@ -358,6 +370,21 @@ export function MailboxDialog({ mode, mailbox }: { mode: "create" | "edit"; mail
               <FieldDescription className="text-xs">
                 Added to the footer of every message (CAN-SPAM, CASL). Required before an active sequence can use this
                 mailbox.
+              </FieldDescription>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor={`${idp}-signature`}>Signature</FieldLabel>
+              <Textarea
+                id={`${idp}-signature`}
+                rows={3}
+                value={form.signature}
+                maxLength={2000}
+                placeholder={"Jordan Lee\nHead of growth, Acme"}
+                onChange={(e) => set("signature", e.target.value)}
+              />
+              <FieldDescription className="text-xs">
+                Plain text added above the footer of every email from this mailbox. Required when the workspace's
+                sending protection asks for signatures.
               </FieldDescription>
             </Field>
           </FieldGroup>

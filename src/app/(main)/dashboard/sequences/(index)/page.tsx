@@ -2,21 +2,29 @@ import type { Metadata } from "next";
 
 import { can } from "@/lib/rbac/permissions";
 import { pageFrom, pagination } from "@/server/http/route";
+import { antiSpamState } from "@/server/services/consents";
 import { pageActor } from "@/server/services/engage-context";
 import { listMailboxes } from "@/server/services/mailboxes";
-import { searchSequences } from "@/server/services/sequences";
+import { searchMembers } from "@/server/services/members";
+import { listSchedules } from "@/server/services/schedules";
+import { sequenceAnalytics, sequenceDiagnostics } from "@/server/services/sequence-insights";
+import { searchSequences, sequenceTags } from "@/server/services/sequences";
 
 import { PageHeader } from "../../_components/records/page-header";
 import { RecordsPagination } from "../../_components/records/records-pagination";
-import { SearchBox } from "../../_components/records/search-box";
-import { CreateSequenceDialog } from "../_components/create-sequence-dialog";
+import { AnalyticsTab } from "../_components/analytics-tab";
+import { BounceGuardBanner, NoMailboxBar } from "../_components/banners";
+import { CreateFlowProvider, CreateSequenceButton } from "../_components/create-flow";
+import { DiagnosticsTab } from "../_components/diagnostics-tab";
+import { EmptyHero } from "../_components/empty-hero";
+import { type ListTab, ListTabs } from "../_components/list-tabs";
+import { ListToolbar } from "../_components/list-toolbar";
 import { SequencesTable } from "../_components/sequences-table";
-import { StatusFilter } from "../_components/status-filter";
 
 export const metadata: Metadata = { title: "Sequences" };
 
 const STATUSES = ["draft", "active", "paused", "archived"] as const;
-type Status = (typeof STATUSES)[number];
+const TABS: ListTab[] = ["all", "analytics", "diagnostics"];
 
 export default async function SequencesPage({
   searchParams,
@@ -25,35 +33,65 @@ export default async function SequencesPage({
 }) {
   const { actor } = await pageActor("sequence:read");
   const search = await searchParams;
-  const q = typeof search.q === "string" ? search.q.slice(0, 200) : undefined;
-  const status = STATUSES.find((s) => s === search.status) as Status | undefined;
-  const page = pageFrom({ page: search.page, per_page: 25 });
-  const [{ sequences, total }, mailboxes] = await Promise.all([
-    searchSequences(actor, { q, status }, page),
-    can(actor.role, "sequence:create") ? listMailboxes(actor) : Promise.resolve([]),
-  ]);
+  const one = (key: string) => (typeof search[key] === "string" ? (search[key] as string) : undefined);
+  const tab = TABS.find((t) => t === one("tab")) ?? "all";
+  const q = one("q")?.slice(0, 200);
+  const status = STATUSES.find((s) => s === one("status"));
+  const ownerId = one("owner")?.slice(0, 100);
+  const tag = one("tag")?.slice(0, 40);
+  const starred = one("starred") === "true" ? true : undefined;
+  const filtered = Boolean(q || status || ownerId || tag || starred);
+  const page = pageFrom({ page: one("page"), per_page: 25 });
+
   const canCreate = can(actor.role, "sequence:create");
-  const mailboxOptions = mailboxes.map((m) => ({ id: m.id, email: m.email, readyToSend: m.readyToSend }));
+  const [list, mailboxes, schedules, members, tags, consent, workspaceTotal] = await Promise.all([
+    searchSequences(actor, { q, status, ownerId, tag, starred }, page),
+    listMailboxes(actor),
+    canCreate ? listSchedules(actor) : Promise.resolve([]),
+    searchMembers(actor, {}, { page: 1, perPage: 100, offset: 0 }),
+    sequenceTags(actor),
+    antiSpamState(actor),
+    filtered ? searchSequences(actor, {}, { page: 1, perPage: 1, offset: 0 }).then((r) => r.total) : null,
+  ]);
+  const total = workspaceTotal ?? list.total;
+  const [analytics, diagnostics] = await Promise.all([
+    tab === "analytics" ? sequenceAnalytics(actor) : Promise.resolve(null),
+    tab === "diagnostics" ? sequenceDiagnostics(actor) : Promise.resolve(null),
+  ]);
+  const noMailbox = !mailboxes.some((m) => m.readyToSend);
 
   return (
-    <div className="flex flex-col gap-4 md:gap-6">
-      <PageHeader
-        title="Sequences"
-        description="Multi-step outreach sent from your own mailboxes, with review, sending windows and one-click unsubscribe."
-        actions={canCreate ? <CreateSequenceDialog mailboxes={mailboxOptions} /> : null}
-      />
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <SearchBox placeholder="Search sequences" label="Search sequences" />
-          <StatusFilter />
-        </div>
-        <SequencesTable
-          sequences={sequences}
-          filtered={Boolean(q || status)}
-          createAction={canCreate ? <CreateSequenceDialog mailboxes={mailboxOptions} /> : null}
-        />
-        {total > 0 ? <RecordsPagination pagination={pagination(page, total)} noun="sequences" /> : null}
+    <CreateFlowProvider
+      antiSpamRequired={consent.required}
+      schedules={schedules}
+      mailboxes={mailboxes.map((m) => ({ id: m.id, email: m.email, readyToSend: m.readyToSend }))}
+    >
+      <div className="flex flex-col gap-4">
+        <PageHeader title="Sequences" actions={canCreate ? <CreateSequenceButton /> : null} />
+        <ListTabs value={tab} issues={diagnostics ? diagnostics.length : null} />
+        <BounceGuardBanner />
+        {noMailbox ? <NoMailboxBar canLink={can(actor.role, "mailbox:create")} /> : null}
+        {tab === "analytics" && analytics ? <AnalyticsTab rows={analytics} /> : null}
+        {tab === "diagnostics" && diagnostics ? <DiagnosticsTab rows={diagnostics} /> : null}
+        {tab === "all" && total === 0 ? <EmptyHero canCreate={canCreate} /> : null}
+        {tab === "all" && total > 0 ? (
+          <div className="flex flex-col gap-3">
+            <ListToolbar owners={members.users.map((m) => ({ id: m.id, name: m.name }))} tags={tags} />
+            {list.sequences.length ? (
+              <SequencesTable
+                sequences={list.sequences}
+                canUpdate={can(actor.role, "sequence:update")}
+                canLaunch={can(actor.role, "sequence:launch")}
+              />
+            ) : (
+              <p className="rounded-xl border px-4 py-10 text-center text-muted-foreground text-sm">
+                No sequences match these filters.
+              </p>
+            )}
+            {list.total > 0 ? <RecordsPagination pagination={pagination(page, list.total)} noun="sequences" /> : null}
+          </div>
+        ) : null}
       </div>
-    </div>
+    </CreateFlowProvider>
   );
 }

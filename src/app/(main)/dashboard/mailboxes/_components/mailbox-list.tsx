@@ -85,6 +85,15 @@ function MailboxCard({ mailbox, permissions }: { mailbox: Mailbox; permissions: 
               {mailbox.postalAddress ?? <span className="text-muted-foreground">Missing</span>}
             </Detail>
           </div>
+          <div className="col-span-2">
+            <Detail label="Signature">
+              {mailbox.signature ? (
+                <span className="whitespace-pre-line break-words">{mailbox.signature}</span>
+              ) : (
+                <span className="text-muted-foreground">None</span>
+              )}
+            </Detail>
+          </div>
         </dl>
         {mailbox.issues.length ? (
           <div className="flex gap-2 rounded-lg bg-amber-500/10 p-3 text-amber-700 text-xs dark:text-amber-400">
