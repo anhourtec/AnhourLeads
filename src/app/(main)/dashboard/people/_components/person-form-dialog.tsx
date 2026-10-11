@@ -108,17 +108,29 @@ export function PersonFormDialog({
   members,
   companies,
   defaultCompanyId,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger,
 }: {
   person?: PersonRow;
   members: Option[];
   companies: CompanyOption[];
   defaultCompanyId?: string;
+  /** Controlled mode (e.g. opened from a menu); `hideTrigger` drops the built-in button. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
 }) {
   const router = useRouter();
   const id = useId();
   const editing = Boolean(person);
   const submitLabel = editing ? "Save changes" : "Add person";
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   const [error, setError] = useState<string | null>(null);
   const initial = { ...toForm(person), ...(defaultCompanyId && !person ? { companyId: defaultCompanyId } : {}) };
   const form = useForm<FormValues>({ resolver: zodResolver(formSchema), defaultValues: initial });
@@ -167,19 +179,21 @@ export function PersonFormDialog({
         }
       }}
     >
-      <DialogTrigger asChild>
-        {editing ? (
-          <Button variant="outline" size="sm">
-            <Pencil data-icon="inline-start" aria-hidden="true" />
-            Edit
-          </Button>
-        ) : (
-          <Button size="sm">
-            <Plus data-icon="inline-start" aria-hidden="true" />
-            Add person
-          </Button>
-        )}
-      </DialogTrigger>
+      {hideTrigger ? null : (
+        <DialogTrigger asChild>
+          {editing ? (
+            <Button variant="outline" size="sm">
+              <Pencil data-icon="inline-start" aria-hidden="true" />
+              Edit
+            </Button>
+          ) : (
+            <Button size="sm">
+              <Plus data-icon="inline-start" aria-hidden="true" />
+              Add person
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{editing ? `Edit ${person?.name}` : "Add person"}</DialogTitle>

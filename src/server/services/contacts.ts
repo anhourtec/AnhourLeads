@@ -1,7 +1,6 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, getTableColumns, ilike, inArray, ne, or, type SQL, sql } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { and, asc, count, desc, eq, getTableColumns, inArray, ne, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -16,9 +15,10 @@ import { conflict, HttpError, notFound } from "@/server/http/errors";
 import { type Page, pagination } from "@/server/http/route";
 
 import { audit } from "./audit";
+import { type CustomFieldValue, mergeCustomFieldValues, validateCustomFieldValues } from "./custom-fields";
+import { recordEvent } from "./events";
 import {
   assertCompany,
-  assertList,
   assertMember,
   chunk,
   cleanupEntities,
@@ -27,27 +27,29 @@ import {
   defaultOwner,
   EXPORT_MAX_ROWS,
   emailSchema,
-  enumList,
   type ImportPayload,
   type ImportReport,
   type ImportRowError,
   idSchema,
-  inList,
-  likePattern,
   mapCsv,
   normalizeDomain,
-  optionalBool,
-  optionalInt,
   optionalText,
   provenanceFor,
   provenanceRows,
   recordProvenance,
-  stringList,
   tagList,
   toCsv,
   unprocessable,
   writeSource,
 } from "./records";
+import {
+  contactLastActivitySql,
+  normalizeFilterInput,
+  type PeopleFilters,
+  peopleConditions,
+  peopleFilterSchema,
+  resolveFilterContext,
+} from "./search-filters";
 
 const { contact, company, user, suppression } = schema;
 
@@ -90,6 +92,9 @@ const contactFieldShape = {
   stage: z.enum(CONTACT_STAGES).optional(),
   consentBasis: optionalText(100),
   tags: tagList.optional(),
+  personaId: idSchema.nullable().optional(),
+  /** Values for workspace custom fields (validated against the field types; null clears one). */
+  customFields: z.record(z.string(), z.unknown()).optional(),
 };
 
 const hasIdentity = (v: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
@@ -105,28 +110,12 @@ export const contactUpdateSchema = z
   .refine((v) => Object.values(v).some((x) => x !== undefined), { message: "Nothing to update." });
 export type ContactUpdateInput = z.infer<typeof contactUpdateSchema>;
 
-const contactSortFields = ["createdAt", "updatedAt", "name", "email", "title", "stage"] as const;
-
-export const contactSearchSchema = z.object({
-  q: z.string().trim().max(200).optional(),
-  title: z.string().trim().max(200).optional(),
-  seniority: enumList(SENIORITIES),
-  department: stringList(),
-  emailStatus: enumList(EMAIL_STATUSES),
-  stage: enumList(CONTACT_STAGES),
-  country: stringList(),
-  tags: stringList(),
-  companyId: idSchema.optional(),
-  ownerId: idSchema.optional(),
-  listId: idSchema.optional(),
-  /** Company attribute filters (people search). */
-  industry: stringList(),
-  employeesMin: optionalInt(0, 10_000_000),
-  employeesMax: optionalInt(0, 10_000_000),
-  sortBy: z.enum(contactSortFields).optional(),
-  sortAscending: optionalBool,
-});
-export type ContactSearch = z.infer<typeof contactSearchSchema>;
+/** People search filters (shared with saved searches and dynamic lists, see search-filters.ts). */
+export const contactSearchSchema = z.preprocess(
+  (v) => (v && typeof v === "object" && !Array.isArray(v) ? normalizeFilterInput(v as Record<string, unknown>) : v),
+  peopleFilterSchema,
+);
+export type ContactSearch = PeopleFilters;
 
 /** Apollo-style names accepted by `POST /mixed_people/search`, mapped onto our filters. */
 export function fromApolloPeopleSearch(body: Record<string, unknown>): Record<string, unknown> {
@@ -201,13 +190,27 @@ const suppressedSql = sql<boolean>`(${contact.email} is not null and exists (
       or (${suppression.kind} = 'domain' and ${suppression.value} = lower(split_part(${contact.email}, '@', 2))))
 ))`;
 
+/** Last activity: the stored timestamp, or the latest timeline row when nothing stored it. */
+export const lastActivitySql = sql<Date | string | null>`coalesce(${contact.lastActivityAt}, (
+  select max(${schema.activity.occurredAt}) from ${schema.activity}
+  where ${schema.activity.organizationId} = ${contact.organizationId} and ${schema.activity.contactId} = ${contact.id}
+))`;
+
 const selection = {
   ...getTableColumns(contact),
   companyName: company.name,
   companyDomain: company.domain,
   ownerName: user.name,
   ownerEmail: user.email,
+  companyEmployeeCount: company.employeeCount,
+  companyIndustry: company.industry,
+  companyKeywords: company.keywords,
+  companyCity: company.city,
+  companyCountry: company.country,
+  companyLinkedinUrl: company.linkedinUrl,
+  companyWebsiteUrl: company.websiteUrl,
   suppressed: suppressedSql,
+  lastActivity: lastActivitySql,
 };
 
 export interface ContactDto {
@@ -232,13 +235,33 @@ export interface ContactDto {
   consentBasis: string | null;
   tags: string[];
   companyId: string | null;
-  company: { id: string; name: string; domain: string | null } | null;
+  company: {
+    id: string;
+    name: string;
+    domain: string | null;
+    employeeCount: number | null;
+    industry: string | null;
+    keywords: string[];
+    city: string | null;
+    country: string | null;
+    linkedinUrl: string | null;
+    websiteUrl: string | null;
+  } | null;
   ownerId: string | null;
   owner: { id: string; name: string; email: string } | null;
   suppressed: boolean;
+  personaId: string | null;
+  customFields: Record<string, unknown>;
+  lastActivityAt: string | null;
   lastEnrichedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+function isoOrNull(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 export function contactName(c: { firstName: string | null; lastName: string | null; email: string | null }): string {
@@ -268,10 +291,27 @@ function toDto(r: ContactRow): ContactDto {
     consentBasis: r.consentBasis,
     tags: r.tags,
     companyId: r.companyId,
-    company: r.companyId && r.companyName ? { id: r.companyId, name: r.companyName, domain: r.companyDomain } : null,
+    company:
+      r.companyId && r.companyName
+        ? {
+            id: r.companyId,
+            name: r.companyName,
+            domain: r.companyDomain,
+            employeeCount: r.companyEmployeeCount,
+            industry: r.companyIndustry,
+            keywords: r.companyKeywords ?? [],
+            city: r.companyCity,
+            country: r.companyCountry,
+            linkedinUrl: r.companyLinkedinUrl,
+            websiteUrl: r.companyWebsiteUrl,
+          }
+        : null,
     ownerId: r.ownerId,
     owner: r.ownerId && r.ownerName ? { id: r.ownerId, name: r.ownerName, email: r.ownerEmail ?? "" } : null,
     suppressed: Boolean(r.suppressed),
+    personaId: r.personaId,
+    customFields: r.customFields ?? {},
+    lastActivityAt: isoOrNull(r.lastActivity),
     lastEnrichedAt: r.lastEnrichedAt?.toISOString() ?? null,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
@@ -288,62 +328,9 @@ function baseQuery() {
 
 type ContactRow = Awaited<ReturnType<typeof baseQuery>>[number];
 
-async function scopeChecks(actor: Actor, f: ContactSearch): Promise<void> {
-  if (f.ownerId) await assertMember(actor, f.ownerId);
-  if (f.companyId) await assertCompany(actor, f.companyId);
-  if (f.listId) await assertList(actor, f.listId, "contact");
-}
-
-const lowerIn = (column: AnyPgColumn, values: string[]) =>
-  inArray(
-    sql`lower(${column})`,
-    values.map((v) => v.toLowerCase()),
-  );
-
-function whereFor(actor: Actor, f: ContactSearch): SQL {
-  const conditions: (SQL | undefined)[] = [eq(contact.organizationId, actor.organizationId)];
-  if (f.q) {
-    const pattern = likePattern(f.q);
-    conditions.push(
-      or(
-        ilike(sql`coalesce(${contact.firstName}, '') || ' ' || coalesce(${contact.lastName}, '')`, pattern),
-        ilike(contact.email, pattern),
-        ilike(contact.title, pattern),
-        ilike(company.name, pattern),
-      ),
-    );
-  }
-  if (f.title) {
-    const words = f.title
-      .split(",")
-      .map((w) => w.trim())
-      .filter(Boolean);
-    if (words.length) conditions.push(or(...words.map((w) => ilike(contact.title, likePattern(w)))));
-  }
-  if (f.seniority?.length) conditions.push(inArray(contact.seniority, f.seniority));
-  if (f.department?.length) conditions.push(lowerIn(contact.department, f.department));
-  if (f.emailStatus?.length) conditions.push(inArray(contact.emailStatus, f.emailStatus));
-  if (f.stage?.length) conditions.push(inArray(contact.stage, f.stage));
-  if (f.country?.length) conditions.push(lowerIn(contact.country, f.country));
-  if (f.tags?.length) {
-    conditions.push(
-      sql`${contact.tags} && ARRAY[${sql.join(
-        f.tags.map((t) => sql`${t}`),
-        sql`, `,
-      )}]::text[]`,
-    );
-  }
-  if (f.companyId) conditions.push(eq(contact.companyId, f.companyId));
-  if (f.ownerId) conditions.push(eq(contact.ownerId, f.ownerId));
-  if (f.listId) conditions.push(inList(f.listId, contact.id));
-  if (f.industry?.length) conditions.push(lowerIn(company.industry, f.industry));
-  if (f.employeesMin !== undefined) conditions.push(sql`${company.employeeCount} >= ${f.employeesMin}`);
-  if (f.employeesMax !== undefined) conditions.push(sql`${company.employeeCount} <= ${f.employeesMax}`);
-  return and(...conditions) as SQL;
-}
-
 function orderFor(f: ContactSearch): SQL[] {
   const dir = f.sortAscending ? asc : desc;
+  const nulls = f.sortAscending ? sql.raw("asc nulls last") : sql.raw("desc nulls last");
   switch (f.sortBy) {
     case "name":
       return [dir(sql`lower(coalesce(${contact.lastName}, ''))`), dir(sql`lower(coalesce(${contact.firstName}, ''))`)];
@@ -355,14 +342,20 @@ function orderFor(f: ContactSearch): SQL[] {
       return [dir(contact.stage)];
     case "updatedAt":
       return [dir(contact.updatedAt)];
+    case "lastActivityAt":
+      return [sql`${contactLastActivitySql} ${nulls}`];
+    case "company":
+      return [sql`lower(${company.name}) ${nulls}`];
+    case "employeeCount":
+      return [sql`${company.employeeCount} ${nulls}`];
     default:
       return [dir(contact.createdAt), asc(contact.id)];
   }
 }
 
 export async function searchContacts(actor: Actor, filters: ContactSearch, page: Page) {
-  await scopeChecks(actor, filters);
-  const where = whereFor(actor, filters);
+  const ctx = await resolveFilterContext(actor, "contact", filters);
+  const where = peopleConditions(filters, ctx);
   const [rows, [{ total }]] = await Promise.all([
     baseQuery()
       .where(where)
@@ -372,6 +365,40 @@ export async function searchContacts(actor: Actor, filters: ContactSearch, page:
     db.select({ total: count() }).from(contact).leftJoin(company, eq(company.id, contact.companyId)).where(where),
   ]);
   return { contacts: rows.map(toDto), pagination: pagination(page, total) };
+}
+
+/** Ids matching the filters (select-all), optionally capped per company. */
+export async function contactIdsFor(
+  actor: Actor,
+  filters: ContactSearch,
+  opts: { limit: number; maxPerCompany?: number },
+): Promise<{ ids: string[]; total: number }> {
+  const ctx = await resolveFilterContext(actor, "contact", filters);
+  const where = peopleConditions(filters, ctx);
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(contact)
+    .leftJoin(company, eq(company.id, contact.companyId))
+    .where(where);
+  const ranked = db
+    .select({
+      id: contact.id,
+      rank: sql<number>`row_number() over (partition by coalesce(${contact.companyId}, ${contact.id}) order by ${contact.createdAt} desc)`.as(
+        "rank",
+      ),
+      createdAt: contact.createdAt,
+    })
+    .from(contact)
+    .leftJoin(company, eq(company.id, contact.companyId))
+    .where(where)
+    .as("ranked");
+  const rows = await db
+    .select({ id: ranked.id })
+    .from(ranked)
+    .where(opts.maxPerCompany ? sql`${ranked.rank} <= ${opts.maxPerCompany}` : undefined)
+    .orderBy(desc(ranked.createdAt), asc(ranked.id))
+    .limit(opts.limit);
+  return { ids: rows.map((r) => r.id), total };
 }
 
 export async function getContact(actor: Actor, id: string): Promise<ContactDto> {
@@ -413,14 +440,30 @@ async function findByEmail(actor: Actor, email: string, exceptId?: string) {
   return row ?? null;
 }
 
-const PROVENANCE_SKIP = ["runDedupe"];
+const PROVENANCE_SKIP = ["runDedupe", "customFields"];
+
+async function assertPersona(actor: Actor, personaId: string): Promise<void> {
+  const [row] = await db
+    .select({ id: schema.persona.id })
+    .from(schema.persona)
+    .where(and(eq(schema.persona.organizationId, actor.organizationId), eq(schema.persona.id, personaId)))
+    .limit(1);
+  if (!row) throw notFound("Persona not found.");
+}
+
+/** Provenance rows for custom field values ("cf.<key>"). */
+function customProvenance(entityId: string, values: Record<string, CustomFieldValue>) {
+  return Object.entries(values).map(([key, value]) => ({ entityId, field: `cf.${key}`, value }));
+}
 
 export async function createContact(
   actor: Actor,
   input: ContactCreateInput,
 ): Promise<{ contact: ContactDto; created: boolean }> {
-  const { runDedupe, ...fields } = input;
+  const { runDedupe, customFields: rawCustom, ...fields } = input;
+  const custom = await validateCustomFieldValues(actor, "contact", rawCustom);
   await checkForeignIds(actor, fields);
+  if (fields.personaId) await assertPersona(actor, fields.personaId);
   if (fields.email) {
     const existing = await findByEmail(actor, fields.email);
     if (existing) {
@@ -428,41 +471,87 @@ export async function createContact(
         throw new HttpError(409, "A person with this email already exists.", { existingId: existing.id });
       }
       const { email: _email, ...rest } = fields;
-      const updated = await updateContact(actor, existing.id, rest);
+      const updated = await updateContact(actor, existing.id, { ...rest, customFields: rawCustom });
       return { contact: updated, created: false };
     }
   }
   const ownerId = fields.ownerId === undefined ? await defaultOwner(actor) : fields.ownerId;
   const [row] = await db
     .insert(contact)
-    .values({ ...fields, ownerId, organizationId: actor.organizationId, source: writeSource(actor) })
-    .returning({ id: contact.id });
-  await recordProvenance(actor, "contact", provenanceFor(row.id, fields, PROVENANCE_SKIP), writeSource(actor));
+    .values({
+      ...fields,
+      customFields: mergeCustomFieldValues({}, custom),
+      ownerId,
+      organizationId: actor.organizationId,
+      source: writeSource(actor),
+    })
+    .returning({ id: contact.id, companyId: contact.companyId });
+  await recordProvenance(
+    actor,
+    "contact",
+    [...provenanceFor(row.id, fields, PROVENANCE_SKIP), ...customProvenance(row.id, custom)],
+    writeSource(actor),
+  );
   await audit(actor, "contact.create", "contact", row.id, { fields: Object.keys(fields) });
-  return { contact: await getContact(actor, row.id), created: true };
+  const dto = await getContact(actor, row.id);
+  await recordEvent({
+    organizationId: actor.organizationId,
+    type: "contact_created",
+    summary: `${dto.name} was added`,
+    contactId: row.id,
+    companyId: row.companyId,
+    actorUserId: actor.userId,
+    metadata: { source: writeSource(actor) },
+  });
+  return { contact: dto, created: true };
 }
 
 export async function updateContact(actor: Actor, id: string, patch: ContactUpdateInput | ContactFields) {
   const [existing] = await db
-    .select({ id: contact.id })
+    .select({ id: contact.id, stage: contact.stage, customFields: contact.customFields })
     .from(contact)
     .where(and(eq(contact.organizationId, actor.organizationId), eq(contact.id, id)))
     .limit(1);
   if (!existing) throw notFound("Contact not found.");
-  await checkForeignIds(actor, patch);
-  if (patch.email && (await findByEmail(actor, patch.email, id))) {
+  const { customFields: rawCustom, ...plain } = patch;
+  const custom = await validateCustomFieldValues(actor, "contact", rawCustom);
+  await checkForeignIds(actor, plain);
+  if (plain.personaId) await assertPersona(actor, plain.personaId);
+  if (plain.email && (await findByEmail(actor, plain.email, id))) {
     throw conflict("Another person in this workspace already has this email.");
   }
-  const set = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+  const set: Record<string, unknown> = Object.fromEntries(Object.entries(plain).filter(([, v]) => v !== undefined));
+  if (Object.keys(custom).length) set.customFields = mergeCustomFieldValues(existing.customFields, custom);
   if (Object.keys(set).length) {
     await db
       .update(contact)
       .set(set)
       .where(and(eq(contact.organizationId, actor.organizationId), eq(contact.id, id)));
-    await recordProvenance(actor, "contact", provenanceFor(id, set), writeSource(actor));
+    const { customFields: _cf, ...plainSet } = set;
+    await recordProvenance(
+      actor,
+      "contact",
+      [...provenanceFor(id, plainSet), ...customProvenance(id, custom)],
+      writeSource(actor),
+    );
     await audit(actor, "contact.update", "contact", id, { fields: Object.keys(set) });
   }
-  return getContact(actor, id);
+  const dto = await getContact(actor, id);
+  if (Object.keys(set).length) {
+    const stageChanged = plain.stage !== undefined && plain.stage !== existing.stage;
+    await recordEvent({
+      organizationId: actor.organizationId,
+      type: stageChanged ? "stage_changed" : "contact_updated",
+      summary: stageChanged
+        ? `Stage changed from ${CONTACT_STAGE_LABELS[existing.stage]} to ${CONTACT_STAGE_LABELS[dto.stage]}`
+        : `${dto.name} was updated`,
+      contactId: id,
+      companyId: dto.companyId,
+      actorUserId: actor.userId,
+      metadata: stageChanged ? { from: existing.stage, to: dto.stage, manual: true } : { fields: Object.keys(set) },
+    });
+  }
+  return dto;
 }
 
 async function assertAllInScope(actor: Actor, ids: string[]): Promise<string[]> {
@@ -521,6 +610,18 @@ export async function bulkUpdateContacts(
     writeSource(actor),
   );
   await audit(actor, action, "contact", null, { count: scoped.length, fields: Object.keys(set) });
+  if (fields.stage) {
+    for (const id of scoped) {
+      await recordEvent({
+        organizationId: actor.organizationId,
+        type: "stage_changed",
+        summary: `Stage changed to ${CONTACT_STAGE_LABELS[fields.stage]}`,
+        contactId: id,
+        actorUserId: actor.userId,
+        metadata: { to: fields.stage, manual: true, bulk: true },
+      });
+    }
+  }
   const rows = await baseQuery()
     .where(and(eq(contact.organizationId, actor.organizationId), inArray(contact.id, scoped.slice(0, 100))))
     .orderBy(asc(contact.id));
@@ -553,7 +654,9 @@ export async function bulkCreateContacts(actor: Actor, items: Record<string, unk
 
   const createdIds: string[] = [];
   const existingIds: string[] = [];
-  for (const { runDedupe: _r, ...fields } of parsed) {
+  for (const { runDedupe: _r, customFields: rawCustom, ...fields } of parsed) {
+    const custom = await validateCustomFieldValues(actor, "contact", rawCustom);
+    if (fields.personaId) await assertPersona(actor, fields.personaId);
     const known = fields.email ? byEmail.get(fields.email) : undefined;
     if (known) {
       existingIds.push(known);
@@ -563,6 +666,7 @@ export async function bulkCreateContacts(actor: Actor, items: Record<string, unk
       .insert(contact)
       .values({
         ...fields,
+        customFields: mergeCustomFieldValues({}, custom),
         ownerId: fields.ownerId === undefined ? fallbackOwner : fields.ownerId,
         organizationId: actor.organizationId,
         source: writeSource(actor),
@@ -570,7 +674,21 @@ export async function bulkCreateContacts(actor: Actor, items: Record<string, unk
       .returning({ id: contact.id });
     if (fields.email) byEmail.set(fields.email, row.id);
     createdIds.push(row.id);
-    await recordProvenance(actor, "contact", provenanceFor(row.id, fields), writeSource(actor));
+    await recordProvenance(
+      actor,
+      "contact",
+      [...provenanceFor(row.id, fields), ...customProvenance(row.id, custom)],
+      writeSource(actor),
+    );
+    await recordEvent({
+      organizationId: actor.organizationId,
+      type: "contact_created",
+      summary: `${contactName({ firstName: fields.firstName ?? null, lastName: fields.lastName ?? null, email: fields.email ?? null })} was added`,
+      contactId: row.id,
+      companyId: fields.companyId ?? null,
+      actorUserId: actor.userId,
+      metadata: { source: writeSource(actor) },
+    });
   }
   await audit(actor, "contact.bulk_create", "contact", null, {
     created: createdIds.length,
@@ -908,9 +1026,9 @@ const EXPORT_HEADER = [
 ];
 
 export async function exportContacts(actor: Actor, filters: ContactSearch): Promise<{ csv: string; count: number }> {
-  await scopeChecks(actor, filters);
+  const ctx = await resolveFilterContext(actor, "contact", filters);
   const rows = await baseQuery()
-    .where(whereFor(actor, filters))
+    .where(peopleConditions(filters, ctx))
     .orderBy(...orderFor(filters), asc(contact.id))
     .limit(EXPORT_MAX_ROWS);
   const csv = toCsv(

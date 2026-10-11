@@ -411,6 +411,27 @@ export interface ImportPayload {
   csv: string;
   mapping: Record<string, string | null>;
   updateExisting: boolean;
+  /** Raw import settings (validated by the import pipeline): stage, duplicates, accounts, list, enrichment. */
+  settings: Record<string, unknown>;
+  /** Uploaded file name, when known. */
+  fileName: string | null;
+}
+
+const SETTING_KEYS = [
+  "stageMode",
+  "stage",
+  "ifExists",
+  "autoAssignAccounts",
+  "listId",
+  "newListName",
+  "fileName",
+  "enrichment",
+] as const;
+
+function pickSettings(source: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of SETTING_KEYS) if (source[key] !== undefined && source[key] !== null) out[key] = source[key];
+  return out;
 }
 
 const importOptions = z.object({
@@ -429,12 +450,24 @@ export async function readImport(req: Request): Promise<ImportPayload> {
   const query = Object.fromEntries(new URL(req.url).searchParams);
   let csv: string;
   let options: unknown;
+  let settings: Record<string, unknown> = pickSettings(query);
+  let fileName: string | null = typeof query.fileName === "string" ? query.fileName : null;
   if (type.startsWith("multipart/form-data")) {
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof Blob)) throw unprocessable("Attach a CSV file in the `file` field.", "file");
     if (file.size > IMPORT_MAX_BYTES) throw new HttpError(413, "The file is larger than 5 MB.");
     csv = await file.text();
+    if (file instanceof File && file.name) fileName = file.name;
+    const rawSettings = form.get("settings");
+    if (typeof rawSettings === "string" && rawSettings) {
+      try {
+        const parsedSettings: unknown = JSON.parse(rawSettings);
+        settings = { ...settings, ...pickSettings(asObject(parsedSettings)) };
+      } catch {
+        throw unprocessable("Settings must be a JSON object.", "settings");
+      }
+    }
     const mapping = form.get("mapping");
     let parsedMapping: unknown;
     if (typeof mapping === "string" && mapping) {
@@ -454,6 +487,8 @@ export async function readImport(req: Request): Promise<ImportPayload> {
       .parse(text ? JSON.parse(text) : {});
     csv = body.csv;
     options = body;
+    const nested = body.settings && typeof body.settings === "object" ? asObject(body.settings) : {};
+    settings = { ...settings, ...pickSettings(body), ...pickSettings(nested) };
   } else {
     csv = await req.text();
     options = { updateExisting: query.updateExisting };
@@ -462,7 +497,14 @@ export async function readImport(req: Request): Promise<ImportPayload> {
     throw new HttpError(413, "The file is larger than 5 MB.");
   if (!csv.trim()) throw unprocessable("The file is empty.", "file");
   const parsed = importOptions.parse(options);
-  return { csv, mapping: parsed.mapping ?? {}, updateExisting: parsed.updateExisting ?? true };
+  if (typeof settings.fileName === "string") fileName = settings.fileName;
+  return {
+    csv,
+    mapping: parsed.mapping ?? {},
+    updateExisting: parsed.updateExisting ?? true,
+    settings,
+    fileName: fileName ? fileName.slice(0, 200) : null,
+  };
 }
 
 export interface ImportRowError {

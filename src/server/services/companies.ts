@@ -1,7 +1,6 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, getTableColumns, ilike, inArray, ne, or, type SQL, sql } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { and, asc, count, desc, eq, getTableColumns, inArray, ne, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { COMPANY_STAGE_LABELS, type CompanyStage } from "@/lib/records-vocabulary";
@@ -11,8 +10,8 @@ import { conflict, HttpError, notFound } from "@/server/http/errors";
 import { type Page, pagination } from "@/server/http/route";
 
 import { audit } from "./audit";
+import { type CustomFieldValue, mergeCustomFieldValues, validateCustomFieldValues } from "./custom-fields";
 import {
-  assertList,
   assertMember,
   chunk,
   cleanupEntities,
@@ -22,27 +21,28 @@ import {
   defaultOwner,
   domainSchema,
   EXPORT_MAX_ROWS,
-  enumList,
   type ImportPayload,
   type ImportReport,
   type ImportRowError,
   idSchema,
-  inList,
-  likePattern,
   mapCsv,
   normalizeDomain,
-  optionalBool,
-  optionalInt,
   optionalText,
   provenanceFor,
   provenanceRows,
   recordProvenance,
-  stringList,
   tagList,
   toCsv,
   unprocessable,
   writeSource,
 } from "./records";
+import {
+  type CompanyFilters,
+  companyConditions,
+  companyFilterSchema,
+  normalizeFilterInput,
+  resolveFilterContext,
+} from "./search-filters";
 
 const { company, contact, user, suppression } = schema;
 
@@ -81,6 +81,8 @@ const companyFieldShape = {
   country: optionalText(100),
   ownerId: idSchema.nullable().optional(),
   stage: z.enum(COMPANY_STAGES).optional(),
+  /** Values for workspace custom fields (validated against the field types; null clears one). */
+  customFields: z.record(z.string(), z.unknown()).optional(),
 };
 
 export const companyCreateSchema = z
@@ -94,23 +96,12 @@ export const companyUpdateSchema = z
   .refine((v) => Object.values(v).some((x) => x !== undefined), { message: "Nothing to update." });
 export type CompanyUpdateInput = z.infer<typeof companyUpdateSchema>;
 
-const companySortFields = ["createdAt", "updatedAt", "name", "domain", "employeeCount", "stage"] as const;
-
-export const companySearchSchema = z.object({
-  q: z.string().trim().max(200).optional(),
-  industry: stringList(),
-  country: stringList(),
-  employeesMin: optionalInt(0, 10_000_000),
-  employeesMax: optionalInt(0, 10_000_000),
-  stage: enumList(COMPANY_STAGES),
-  ownerId: idSchema.optional(),
-  technologies: stringList(),
-  listId: idSchema.optional(),
-  domains: stringList(1000, 255),
-  sortBy: z.enum(companySortFields).optional(),
-  sortAscending: optionalBool,
-});
-export type CompanySearch = z.infer<typeof companySearchSchema>;
+/** Company search filters (shared with saved searches and dynamic lists, see search-filters.ts). */
+export const companySearchSchema = z.preprocess(
+  (v) => (v && typeof v === "object" && !Array.isArray(v) ? normalizeFilterInput(v as Record<string, unknown>) : v),
+  companyFilterSchema,
+);
+export type CompanySearch = CompanyFilters;
 
 /** Apollo-style names accepted by `POST /mixed_companies/search` and `/accounts/search`. */
 export function fromApolloCompanySearch(body: Record<string, unknown>): Record<string, unknown> {
@@ -176,12 +167,19 @@ const suppressedSql = sql<boolean>`(${company.domain} is not null and exists (
     and ${suppression.kind} = 'domain' and ${suppression.value} = lower(${company.domain})
 ))`;
 
+/** Last activity: the stored timestamp, or the latest timeline row for the company or its people. */
+export const companyLastActivitySql = sql<Date | string | null>`coalesce(${company.lastActivityAt}, (
+  select max(${schema.activity.occurredAt}) from ${schema.activity}
+  where ${schema.activity.organizationId} = ${company.organizationId} and ${schema.activity.companyId} = ${company.id}
+))`;
+
 const selection = {
   ...getTableColumns(company),
   ownerName: user.name,
   ownerEmail: user.email,
   contactCount: contactCountSql,
   suppressed: suppressedSql,
+  lastActivity: companyLastActivitySql,
 };
 
 function baseQuery() {
@@ -215,9 +213,17 @@ export interface CompanyDto {
   owner: { id: string; name: string; email: string } | null;
   contactCount: number;
   suppressed: boolean;
+  customFields: Record<string, unknown>;
+  lastActivityAt: string | null;
   lastEnrichedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+function isoOrNull(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 function toDto(r: CompanyRow): CompanyDto {
@@ -246,64 +252,30 @@ function toDto(r: CompanyRow): CompanyDto {
     owner: r.ownerId && r.ownerName ? { id: r.ownerId, name: r.ownerName, email: r.ownerEmail ?? "" } : null,
     contactCount: Number(r.contactCount ?? 0),
     suppressed: Boolean(r.suppressed),
+    customFields: r.customFields ?? {},
+    lastActivityAt: isoOrNull(r.lastActivity),
     lastEnrichedAt: r.lastEnrichedAt?.toISOString() ?? null,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
 }
 
-async function scopeChecks(actor: Actor, f: CompanySearch): Promise<void> {
-  if (f.ownerId) await assertMember(actor, f.ownerId);
-  if (f.listId) await assertList(actor, f.listId, "company");
-}
-
-const lowerIn = (column: AnyPgColumn, values: string[]) =>
-  inArray(
-    sql`lower(${column})`,
-    values.map((v) => v.toLowerCase()),
-  );
-
-function whereFor(actor: Actor, f: CompanySearch): SQL {
-  const conditions: (SQL | undefined)[] = [eq(company.organizationId, actor.organizationId)];
-  if (f.q) {
-    const pattern = likePattern(f.q);
-    conditions.push(or(ilike(company.name, pattern), ilike(company.domain, pattern)));
-  }
-  if (f.industry?.length) conditions.push(lowerIn(company.industry, f.industry));
-  if (f.country?.length) conditions.push(lowerIn(company.country, f.country));
-  if (f.employeesMin !== undefined) conditions.push(sql`${company.employeeCount} >= ${f.employeesMin}`);
-  if (f.employeesMax !== undefined) conditions.push(sql`${company.employeeCount} <= ${f.employeesMax}`);
-  if (f.stage?.length) conditions.push(inArray(company.stage, f.stage));
-  if (f.ownerId) conditions.push(eq(company.ownerId, f.ownerId));
-  if (f.technologies?.length) {
-    const wanted = f.technologies.map((t) => t.toLowerCase());
-    conditions.push(
-      sql`exists (select 1 from unnest(${company.technologies}) as t(name) where lower(t.name) in (${sql.join(
-        wanted.map((w) => sql`${w}`),
-        sql`, `,
-      )}))`,
-    );
-  }
-  if (f.domains?.length) {
-    const domains = f.domains.flatMap((d) => {
-      const n = normalizeDomain(d);
-      return n ? [n] : [];
-    });
-    conditions.push(domains.length ? inArray(company.domain, domains) : sql`false`);
-  }
-  if (f.listId) conditions.push(inList(f.listId, company.id));
-  return and(...conditions) as SQL;
-}
-
 function orderFor(f: CompanySearch): SQL[] {
   const dir = f.sortAscending ? asc : desc;
+  const nulls = sql.raw(f.sortAscending ? "asc nulls last" : "desc nulls last");
   switch (f.sortBy) {
     case "name":
       return [dir(sql`lower(${company.name})`)];
     case "domain":
       return [dir(company.domain)];
     case "employeeCount":
-      return [sql`${company.employeeCount} ${sql.raw(f.sortAscending ? "asc" : "desc")} nulls last`];
+      return [sql`${company.employeeCount} ${nulls}`];
+    case "annualRevenue":
+      return [sql`${company.annualRevenue} ${nulls}`];
+    case "foundedYear":
+      return [sql`${company.foundedYear} ${nulls}`];
+    case "lastActivityAt":
+      return [sql`${companyLastActivitySql} ${nulls}`];
     case "stage":
       return [dir(company.stage)];
     case "updatedAt":
@@ -314,8 +286,8 @@ function orderFor(f: CompanySearch): SQL[] {
 }
 
 export async function searchCompanies(actor: Actor, filters: CompanySearch, page: Page) {
-  await scopeChecks(actor, filters);
-  const where = whereFor(actor, filters);
+  const ctx = await resolveFilterContext(actor, "company", filters);
+  const where = companyConditions(filters, ctx);
   const [rows, [{ total }]] = await Promise.all([
     baseQuery()
       .where(where)
@@ -325,6 +297,26 @@ export async function searchCompanies(actor: Actor, filters: CompanySearch, page
     db.select({ total: count() }).from(company).where(where),
   ]);
   return { accounts: rows.map(toDto), pagination: pagination(page, total) };
+}
+
+/** Ids matching the filters (select-all). */
+export async function companyIdsFor(
+  actor: Actor,
+  filters: CompanySearch,
+  opts: { limit: number },
+): Promise<{ ids: string[]; total: number }> {
+  const ctx = await resolveFilterContext(actor, "company", filters);
+  const where = companyConditions(filters, ctx);
+  const [[{ total }], rows] = await Promise.all([
+    db.select({ total: count() }).from(company).where(where),
+    db
+      .select({ id: company.id })
+      .from(company)
+      .where(where)
+      .orderBy(...orderFor(filters), asc(company.id))
+      .limit(opts.limit),
+  ]);
+  return { ids: rows.map((r) => r.id), total };
 }
 
 export async function getCompany(actor: Actor, id: string): Promise<CompanyDto> {
@@ -369,11 +361,16 @@ async function findByDomain(actor: Actor, domain: string, exceptId?: string) {
   return row ?? null;
 }
 
+function customProvenance(entityId: string, values: Record<string, CustomFieldValue>) {
+  return Object.entries(values).map(([key, value]) => ({ entityId, field: `cf.${key}`, value }));
+}
+
 export async function createCompany(
   actor: Actor,
   input: CompanyCreateInput,
 ): Promise<{ account: CompanyDto; created: boolean }> {
-  const { runDedupe, ...fields } = input;
+  const { runDedupe, customFields: rawCustom, ...fields } = input;
+  const custom = await validateCustomFieldValues(actor, "company", rawCustom);
   if (fields.ownerId) await assertMember(actor, fields.ownerId);
   if (fields.domain) {
     const existing = await findByDomain(actor, fields.domain);
@@ -382,8 +379,10 @@ export async function createCompany(
         throw new HttpError(409, "A company with this domain already exists.", { existingId: existing.id });
       }
       const { domain: _d, ...rest } = fields;
-      const hasChanges = Object.values(rest).some((v) => v !== undefined);
-      const account = hasChanges ? await updateCompany(actor, existing.id, rest) : await getCompany(actor, existing.id);
+      const hasChanges = Object.values(rest).some((v) => v !== undefined) || Object.keys(custom).length > 0;
+      const account = hasChanges
+        ? await updateCompany(actor, existing.id, { ...rest, customFields: rawCustom })
+        : await getCompany(actor, existing.id);
       return { account, created: false };
     }
   }
@@ -394,36 +393,51 @@ export async function createCompany(
     .values({
       ...fields,
       name,
+      customFields: mergeCustomFieldValues({}, custom),
       websiteUrl: fields.websiteUrl ?? (fields.domain ? `https://${fields.domain}` : null),
       ownerId,
       organizationId: actor.organizationId,
       source: writeSource(actor),
     })
     .returning({ id: company.id });
-  await recordProvenance(actor, "company", provenanceFor(row.id, { ...fields, name }), writeSource(actor));
+  await recordProvenance(
+    actor,
+    "company",
+    [...provenanceFor(row.id, { ...fields, name }), ...customProvenance(row.id, custom)],
+    writeSource(actor),
+  );
   await audit(actor, "company.create", "company", row.id, { fields: Object.keys(fields) });
   return { account: await getCompany(actor, row.id), created: true };
 }
 
 export async function updateCompany(actor: Actor, id: string, patch: Omit<CompanyUpdateInput, never>) {
   const [existing] = await db
-    .select({ id: company.id })
+    .select({ id: company.id, customFields: company.customFields })
     .from(company)
     .where(and(eq(company.organizationId, actor.organizationId), eq(company.id, id)))
     .limit(1);
   if (!existing) throw notFound("Company not found.");
-  if (patch.ownerId) await assertMember(actor, patch.ownerId);
-  if (patch.domain && (await findByDomain(actor, patch.domain, id))) {
+  const { customFields: rawCustom, ...plain } = patch;
+  const custom = await validateCustomFieldValues(actor, "company", rawCustom);
+  if (plain.ownerId) await assertMember(actor, plain.ownerId);
+  if (plain.domain && (await findByDomain(actor, plain.domain, id))) {
     throw conflict("Another company in this workspace already has this domain.");
   }
-  if (patch.name === null) throw unprocessable("A company needs a name.", "name");
-  const set = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+  if (plain.name === null) throw unprocessable("A company needs a name.", "name");
+  const set: Record<string, unknown> = Object.fromEntries(Object.entries(plain).filter(([, v]) => v !== undefined));
+  if (Object.keys(custom).length) set.customFields = mergeCustomFieldValues(existing.customFields, custom);
   if (Object.keys(set).length) {
     await db
       .update(company)
       .set(set)
       .where(and(eq(company.organizationId, actor.organizationId), eq(company.id, id)));
-    await recordProvenance(actor, "company", provenanceFor(id, set), writeSource(actor));
+    const { customFields: _cf, ...plainSet } = set;
+    await recordProvenance(
+      actor,
+      "company",
+      [...provenanceFor(id, plainSet), ...customProvenance(id, custom)],
+      writeSource(actor),
+    );
     await audit(actor, "company.update", "company", id, { fields: Object.keys(set) });
   }
   return getCompany(actor, id);
@@ -513,7 +527,8 @@ export async function bulkCreateCompanies(actor: Actor, items: Record<string, un
   const fallbackOwner = await defaultOwner(actor);
   const createdIds: string[] = [];
   const existingIds: string[] = [];
-  for (const { runDedupe: _r, ...fields } of parsed) {
+  for (const { runDedupe: _r, customFields: rawCustom, ...fields } of parsed) {
+    const custom = await validateCustomFieldValues(actor, "company", rawCustom);
     const known = fields.domain ? byDomain.get(fields.domain) : undefined;
     if (known) {
       existingIds.push(known);
@@ -525,6 +540,7 @@ export async function bulkCreateCompanies(actor: Actor, items: Record<string, un
       .values({
         ...fields,
         name,
+        customFields: mergeCustomFieldValues({}, custom),
         websiteUrl: fields.websiteUrl ?? (fields.domain ? `https://${fields.domain}` : null),
         ownerId: fields.ownerId === undefined ? fallbackOwner : fields.ownerId,
         organizationId: actor.organizationId,
@@ -533,7 +549,12 @@ export async function bulkCreateCompanies(actor: Actor, items: Record<string, un
       .returning({ id: company.id });
     if (fields.domain) byDomain.set(fields.domain, row.id);
     createdIds.push(row.id);
-    await recordProvenance(actor, "company", provenanceFor(row.id, { ...fields, name }), writeSource(actor));
+    await recordProvenance(
+      actor,
+      "company",
+      [...provenanceFor(row.id, { ...fields, name }), ...customProvenance(row.id, custom)],
+      writeSource(actor),
+    );
   }
   await audit(actor, "company.bulk_create", "company", null, {
     created: createdIds.length,
@@ -801,9 +822,9 @@ const EXPORT_HEADER = [
 ];
 
 export async function exportCompanies(actor: Actor, filters: CompanySearch): Promise<{ csv: string; count: number }> {
-  await scopeChecks(actor, filters);
+  const ctx = await resolveFilterContext(actor, "company", filters);
   const rows = await baseQuery()
-    .where(whereFor(actor, filters))
+    .where(companyConditions(filters, ctx))
     .orderBy(...orderFor(filters), asc(company.id))
     .limit(EXPORT_MAX_ROWS);
   const csv = toCsv(

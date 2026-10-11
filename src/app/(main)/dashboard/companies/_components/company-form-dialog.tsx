@@ -130,12 +130,30 @@ const TEXT_FIELDS: { name: TextField; label: string; type?: string; mono?: boole
   ];
 
 /** Add a company, or edit one (only changed fields are sent, so provenance stays accurate). */
-export function CompanyFormDialog({ company, members }: { company?: CompanyRow; members: Option[] }) {
+export function CompanyFormDialog({
+  company,
+  members,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger,
+}: {
+  company?: CompanyRow;
+  members: Option[];
+  /** Controlled mode (e.g. opened from a menu); `hideTrigger` drops the built-in button. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+}) {
   const router = useRouter();
   const id = useId();
   const editing = Boolean(company);
   const submitLabel = editing ? "Save changes" : "Add company";
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   const [error, setError] = useState<string | null>(null);
   const initial = toForm(company);
   const form = useForm<FormValues>({ resolver: zodResolver(formSchema), defaultValues: initial });
@@ -183,19 +201,21 @@ export function CompanyFormDialog({ company, members }: { company?: CompanyRow; 
         }
       }}
     >
-      <DialogTrigger asChild>
-        {editing ? (
-          <Button variant="outline" size="sm">
-            <Pencil data-icon="inline-start" aria-hidden="true" />
-            Edit
-          </Button>
-        ) : (
-          <Button size="sm">
-            <Plus data-icon="inline-start" aria-hidden="true" />
-            Add company
-          </Button>
-        )}
-      </DialogTrigger>
+      {hideTrigger ? null : (
+        <DialogTrigger asChild>
+          {editing ? (
+            <Button variant="outline" size="sm">
+              <Pencil data-icon="inline-start" aria-hidden="true" />
+              Edit
+            </Button>
+          ) : (
+            <Button size="sm">
+              <Plus data-icon="inline-start" aria-hidden="true" />
+              Add company
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{editing ? `Edit ${company?.name}` : "Add company"}</DialogTitle>

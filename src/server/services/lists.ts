@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, gte, ilike, inArray, lte, notInArray, or, type SQL, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, notInArray, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Actor } from "@/server/auth/actor";
@@ -9,35 +9,42 @@ import { HttpError, notFound } from "@/server/http/errors";
 import type { Page } from "@/server/http/route";
 
 import { audit } from "./audit";
+import {
+  type CompanyFilters as CompanyFilterValues,
+  companyConditions as companyConditionsFor,
+  companyFilterSchema,
+  type FilterContext,
+  normalizeFilterInput,
+  type PeopleFilters,
+  peopleConditions,
+  peopleFilterSchema,
+} from "./search-filters";
 
 /* -------------------------------------------------------------------------- */
 /* Input schemas                                                              */
 /* -------------------------------------------------------------------------- */
 
-const text = z.string().trim().max(200);
+const _text = z.string().trim().max(200);
 
-export const contactFiltersSchema = z
-  .object({
-    q: text.optional(),
-    stage: z.enum(schema.contact.stage.enumValues).optional(),
-    emailStatus: z.enum(schema.contact.emailStatus.enumValues).optional(),
-    country: text.optional(),
-    seniority: z.enum(schema.contact.seniority.enumValues).optional(),
-  })
-  .strict();
+/** Dynamic list filters: the people / company search filters (search-filters.ts), minus list and view keys. */
+const dropViewKeys = (v: unknown) => {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const {
+    listId: _l,
+    listExclude: _e,
+    segment: _s,
+    sortBy: _b,
+    sortAscending: _a,
+    ids: _i,
+    ...rest
+  } = normalizeFilterInput(v as Record<string, unknown>);
+  return rest;
+};
+export const contactFiltersSchema = z.preprocess(dropViewKeys, peopleFilterSchema);
+export const companyFiltersSchema = z.preprocess(dropViewKeys, companyFilterSchema);
 
-export const companyFiltersSchema = z
-  .object({
-    q: text.optional(),
-    industry: text.optional(),
-    country: text.optional(),
-    employeeMin: z.number().int().min(0).optional(),
-    employeeMax: z.number().int().min(0).optional(),
-  })
-  .strict();
-
-export type ContactFilters = z.infer<typeof contactFiltersSchema>;
-export type CompanyFilters = z.infer<typeof companyFiltersSchema>;
+export type ContactFilters = PeopleFilters;
+export type CompanyFilters = CompanyFilterValues;
 export type ListEntityType = "contact" | "company";
 
 export const createListSchema = z
@@ -119,50 +126,29 @@ export interface CompanyMember {
 /* Filter semantics shared with dynamic lists                                 */
 /* -------------------------------------------------------------------------- */
 
-function like(value: string): string {
-  return `%${value.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-}
-
-export function contactConditions(organizationId: string, filters: ContactFilters): SQL[] {
-  const c = schema.contact;
-  const where: SQL[] = [eq(c.organizationId, organizationId)];
-  if (filters.q) {
-    const pattern = like(filters.q);
-    const match = or(
-      ilike(c.firstName, pattern),
-      ilike(c.lastName, pattern),
-      ilike(c.email, pattern),
-      ilike(c.title, pattern),
-      sql`(coalesce(${c.firstName}, '') || ' ' || coalesce(${c.lastName}, '')) ilike ${pattern}`,
-    );
-    if (match) where.push(match);
-  }
-  if (filters.stage) where.push(eq(c.stage, filters.stage));
-  if (filters.emailStatus) where.push(eq(c.emailStatus, filters.emailStatus));
-  if (filters.country) where.push(ilike(c.country, filters.country));
-  if (filters.seniority) where.push(eq(c.seniority, filters.seniority));
-  return where;
-}
-
-export function companyConditions(organizationId: string, filters: CompanyFilters): SQL[] {
-  const c = schema.company;
-  const where: SQL[] = [eq(c.organizationId, organizationId)];
-  if (filters.q) {
-    const pattern = like(filters.q);
-    const match = or(ilike(c.name, pattern), ilike(c.domain, pattern));
-    if (match) where.push(match);
-  }
-  if (filters.industry) where.push(ilike(c.industry, filters.industry));
-  if (filters.country) where.push(ilike(c.country, filters.country));
-  if (filters.employeeMin !== undefined) where.push(gte(c.employeeCount, filters.employeeMin));
-  if (filters.employeeMax !== undefined) where.push(lte(c.employeeCount, filters.employeeMax));
-  return where;
+function cleanFilters(filters: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(filters).filter(([, v]) => v !== undefined && !(Array.isArray(v) && !v.length)),
+  );
 }
 
 function parseFilters(entityType: ListEntityType, filters: Record<string, unknown> | null) {
   return entityType === "contact"
-    ? { entityType, filters: contactFiltersSchema.catch({}).parse(filters ?? {}) }
-    : { entityType, filters: companyFiltersSchema.catch({}).parse(filters ?? {}) };
+    ? { entityType, filters: contactFiltersSchema.catch({}).parse(filters ?? {}) as ContactFilters }
+    : { entityType, filters: companyFiltersSchema.catch({}).parse(filters ?? {}) as CompanyFilters };
+}
+
+function listContext(organizationId: string, userId: string | null = null): FilterContext {
+  return { organizationId, userId, dynamicLists: new Map() };
+}
+
+/** Conditions for a contact search inside a list screen (keyword `q` only, the list decides the rest). */
+function contactQuery(organizationId: string, q: string): SQL {
+  return peopleConditions({ q }, listContext(organizationId));
+}
+
+function companyQuery(organizationId: string, q: string): SQL {
+  return companyConditionsFor({ q }, listContext(organizationId));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -188,13 +174,14 @@ async function memberCount(row: ListRow): Promise<number> {
       const [r] = await db
         .select({ n: count() })
         .from(schema.contact)
-        .where(and(...contactConditions(row.organizationId, parsed.filters)));
+        .leftJoin(schema.company, eq(schema.company.id, schema.contact.companyId))
+        .where(peopleConditions(parsed.filters, listContext(row.organizationId)));
       return r?.n ?? 0;
     }
     const [r] = await db
       .select({ n: count() })
       .from(schema.company)
-      .where(and(...companyConditions(row.organizationId, parsed.filters)));
+      .where(companyConditionsFor(parsed.filters, listContext(row.organizationId)));
     return r?.n ?? 0;
   }
   const table = row.entityType === "contact" ? schema.contact : schema.company;
@@ -256,7 +243,8 @@ async function assertUniqueName(actor: Actor, name: string, entityType: ListEnti
 export async function createList(actor: Actor, input: unknown): Promise<ListView> {
   const data = createListSchema.parse(input);
   await assertUniqueName(actor, data.name, data.entityType);
-  const filters = data.kind === "dynamic" ? parseFilters(data.entityType, data.filters ?? {}).filters : null;
+  const filters =
+    data.kind === "dynamic" ? cleanFilters(parseFilters(data.entityType, data.filters ?? {}).filters) : null;
   const [row] = await db
     .insert(schema.list)
     .values({
@@ -283,7 +271,7 @@ export async function updateList(actor: Actor, id: string, input: unknown): Prom
   if (data.filters !== undefined) {
     if (row.kind !== "dynamic") throw new HttpError(422, "Only dynamic lists have filters.");
     const schemaFor = row.entityType === "contact" ? contactFiltersSchema : companyFiltersSchema;
-    patch.filters = schemaFor.parse(data.filters);
+    patch.filters = cleanFilters(schemaFor.parse(data.filters) as Record<string, unknown>);
   }
   if (Object.keys(patch).length === 0) return toView(row);
   const [updated] = await db
@@ -385,8 +373,15 @@ export async function listMembers(actor: Actor, id: string, page: Page, q?: stri
   if (row.kind === "dynamic") {
     const parsed = parseFilters(row.entityType, row.filters);
     if (parsed.entityType === "contact") {
-      const where = and(...contactConditions(org, parsed.filters), ...(q ? contactConditions(org, { q }) : []));
-      const [total] = await db.select({ n: count() }).from(schema.contact).where(where);
+      const where = and(
+        peopleConditions(parsed.filters, listContext(org, actor.userId)),
+        q ? contactQuery(org, q) : undefined,
+      );
+      const [total] = await db
+        .select({ n: count() })
+        .from(schema.contact)
+        .leftJoin(schema.company, eq(schema.company.id, schema.contact.companyId))
+        .where(where);
       const rows = await db
         .select(contactColumns)
         .from(schema.contact)
@@ -397,7 +392,10 @@ export async function listMembers(actor: Actor, id: string, page: Page, q?: stri
         .offset(page.offset);
       return { entityType: "contact", contacts: rows.map(contactMember), total: total?.n ?? 0 };
     }
-    const where = and(...companyConditions(org, parsed.filters), ...(q ? companyConditions(org, { q }) : []));
+    const where = and(
+      companyConditionsFor(parsed.filters, listContext(org, actor.userId)),
+      q ? companyQuery(org, q) : undefined,
+    );
     const [total] = await db.select({ n: count() }).from(schema.company).where(where);
     const rows = await db
       .select(companyColumns)
@@ -410,12 +408,13 @@ export async function listMembers(actor: Actor, id: string, page: Page, q?: stri
   }
 
   if (row.entityType === "contact") {
-    const where = and(eq(schema.listMember.listId, row.id), ...(q ? contactConditions(org, { q }) : []));
+    const where = and(eq(schema.listMember.listId, row.id), q ? contactQuery(org, q) : undefined);
     const join = and(eq(schema.contact.id, schema.listMember.entityId), eq(schema.contact.organizationId, org));
     const [total] = await db
       .select({ n: count() })
       .from(schema.listMember)
       .innerJoin(schema.contact, join)
+      .leftJoin(schema.company, eq(schema.company.id, schema.contact.companyId))
       .where(where);
     const rows = await db
       .select({ ...contactColumns, addedAt: schema.listMember.addedAt })
@@ -429,7 +428,7 @@ export async function listMembers(actor: Actor, id: string, page: Page, q?: stri
     return { entityType: "contact", contacts: rows.map(contactMember), total: total?.n ?? 0 };
   }
 
-  const where = and(eq(schema.listMember.listId, row.id), ...(q ? companyConditions(org, { q }) : []));
+  const where = and(eq(schema.listMember.listId, row.id), q ? companyQuery(org, q) : undefined);
   const join = and(eq(schema.company.id, schema.listMember.entityId), eq(schema.company.organizationId, org));
   const [total] = await db.select({ n: count() }).from(schema.listMember).innerJoin(schema.company, join).where(where);
   const rows = await db
@@ -464,7 +463,7 @@ async function staticListFor(actor: Actor, listId: string): Promise<ListRow> {
 export async function addMembers(
   actor: Actor,
   input: unknown,
-): Promise<{ list: ListView; added: number; alreadyMembers: number }> {
+): Promise<{ list: ListView; added: number; alreadyMembers: number; addedIds: string[] }> {
   const { listId, entityIds } = entityIdsSchema.parse(input);
   const row = await staticListFor(actor, listId);
   const unique = [...new Set(entityIds)];
@@ -482,7 +481,12 @@ export async function addMembers(
     .returning({ entityId: schema.listMember.entityId });
   await db.update(schema.list).set({ updatedAt: new Date() }).where(eq(schema.list.id, row.id));
   await audit(actor, "list.members.add", "list", row.id, { count: inserted.length });
-  return { list: await toView(row), added: inserted.length, alreadyMembers: unique.length - inserted.length };
+  return {
+    list: await toView(row),
+    added: inserted.length,
+    alreadyMembers: unique.length - inserted.length,
+    addedIds: inserted.map((r) => r.entityId),
+  };
 }
 
 export async function removeMembers(actor: Actor, input: unknown): Promise<{ list: ListView; removed: number }> {
@@ -514,7 +518,7 @@ export async function searchContacts(
   q: string,
   opts: { excludeIds?: string[]; limit?: number } = {},
 ): Promise<ContactMember[]> {
-  const where = contactConditions(actor.organizationId, { q: q.trim() || undefined });
+  const where: SQL[] = [peopleConditions({ q: q.trim() || undefined }, listContext(actor.organizationId))];
   if (opts.excludeIds?.length) where.push(notInArray(schema.contact.id, opts.excludeIds));
   const rows = await db
     .select(contactColumns)
@@ -531,7 +535,7 @@ export async function searchCompanies(
   q: string,
   opts: { excludeIds?: string[]; limit?: number } = {},
 ): Promise<CompanyMember[]> {
-  const where = companyConditions(actor.organizationId, { q: q.trim() || undefined });
+  const where: SQL[] = [companyConditionsFor({ q: q.trim() || undefined }, listContext(actor.organizationId))];
   if (opts.excludeIds?.length) where.push(notInArray(schema.company.id, opts.excludeIds));
   const rows = await db
     .select(companyColumns)
