@@ -46,6 +46,7 @@ const wikidataConfig = z.strictObject({
   endpoint: httpUrl.optional(),
   countries: qids.optional(),
   industries: qids.optional(),
+  requireHeadcount: z.boolean().optional(),
   maxRows: z.number().int().min(1).max(50_000).optional(),
   pageSize: z.number().int().min(1).max(1000).optional(),
   everyDays: everyDays.optional(),
@@ -253,7 +254,7 @@ async function runWikidata(row: SeedRow, stats: SeedRunStats): Promise<void> {
       stats.errors.push(`offset ${offset}: ${res.reason}${res.status ? ` (HTTP ${res.status})` : ""}`);
       break;
     }
-    const { rows, count } = parseWikidataResults(res.body);
+    const { rows, items } = parseWikidataResults(res.body);
     stats.fetched += rows.length;
     for (const item of rows) {
       const site = normalizeUrl(item.website);
@@ -296,7 +297,8 @@ async function runWikidata(row: SeedRow, stats: SeedRunStats): Promise<void> {
       stats.companies += 1;
       addEnqueue(stats, await enqueue([{ url: home.toString(), kind: "homepage", discoveredFrom: `seed:${row.id}` }]));
     }
-    if (count < pageSize) break;
+    // The page holds pageSize distinct items (several rows each); fewer means the last page.
+    if (items < pageSize) break;
   }
 }
 

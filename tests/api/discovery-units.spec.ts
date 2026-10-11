@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { extractPeople, jsonLdObjects, plausiblePersonName } from "../../src/server/crawler/extract";
 import {
   atsApiUrl,
   atsBoardFromApiUrl,
@@ -10,9 +11,13 @@ import {
 import {
   backoffMs,
   companyDomainFor,
+  companyNameFromTitle,
+  countryName,
   departmentFromTitle,
   employeeRangeFor,
   hostDelayMs,
+  isOtherLocale,
+  isReservedHost,
   kindForUrl,
   personOptoutKey,
   recrawlIntervalMs,
@@ -276,10 +281,15 @@ test.describe("Wikidata", () => {
     expect(query).toContain("VALUES ?country { wd:Q16 }");
     expect(query).not.toContain("DROP");
     expect(query).toContain("VALUES ?industry { wd:Q11661 }");
-    expect(query).toContain("wdt:P31/wdt:P279* ?type");
-    expect(query).toContain("wdt:P856 ?website");
-    expect(query).toMatch(/LIMIT 200\nOFFSET 400$/);
-    expect(buildWikidataQuery({}, 5000, -3)).toMatch(/LIMIT 1000\nOFFSET 0$/);
+    // Direct instances, paged in a subquery: the subclass path and a global ORDER BY time out on
+    // the public endpoint.
+    expect(query).toContain("?item wdt:P31 ?type ; wdt:P856 ?website .");
+    expect(query).not.toContain("wdt:P279*");
+    expect(query).not.toContain("ORDER BY");
+    expect(query).toMatch(/SELECT DISTINCT \?item WHERE \{[\s\S]*\}\n {4}LIMIT 200\n {4}OFFSET 400\n/);
+    expect(buildWikidataQuery({}, 5000, -3)).toMatch(/LIMIT 1000\n {4}OFFSET 0\n/);
+    expect(buildWikidataQuery({}, 10, 0)).not.toContain("wdt:P1128 [] .");
+    expect(buildWikidataQuery({ requireHeadcount: true }, 10, 0)).toContain("wdt:P1128 [] .");
     const url = new URL(wikidataRequestUrl("https://query.wikidata.org/sparql", query));
     expect(url.searchParams.get("format")).toBe("json");
   });
@@ -309,8 +319,9 @@ test.describe("Wikidata", () => {
         ],
       },
     };
-    const { rows, count } = parseWikidataResults(JSON.stringify(body));
+    const { rows, count, items } = parseWikidataResults(JSON.stringify(body));
     expect(count).toBe(3);
+    expect(items).toBe(2);
     expect(rows).toEqual([
       {
         qid: "Q1",
@@ -323,6 +334,105 @@ test.describe("Wikidata", () => {
         city: null,
       },
     ]);
-    expect(parseWikidataResults("nope")).toEqual({ rows: [], count: 0 });
+    expect(parseWikidataResults("nope")).toEqual({ rows: [], count: 0, items: 0 });
+  });
+});
+
+test.describe("real-web guards", () => {
+  test("background workers leave local and reserved hosts alone", () => {
+    for (const host of [
+      "localhost",
+      "localhost:48091",
+      "nimbus-disco.localhost:48091",
+      "127.0.0.1:3410",
+      "[::1]:8080",
+      "acme.test",
+      "orbit.example",
+      "x.invalid",
+      "printer.local",
+    ])
+      expect(isReservedHost(host), host).toBe(true);
+    for (const host of ["example.com", "www.stripe.com", "test.io", "localhost.company.com", "10.0.0.1"])
+      expect(isReservedHost(host), host).toBe(false);
+  });
+
+  test("product, plan and logo headings are not people's names", () => {
+    for (const name of ["Mary Major", "María José García", "Jean-Luc Picard", "J. R. Smith", "Mary O'Neil"])
+      expect(plausiblePersonName(name), name).toBe(true);
+    for (const name of ["The HubSpot Customer Platform", "Small Business Bundle", "Open AI", "Acme Labs", "Our Team"])
+      expect(plausiblePersonName(name), name).toBe(false);
+  });
+
+  test("review authors, bylines and bare names outside team pages are not staff", () => {
+    const ld = (v: unknown) => `<script type="application/ld+json">${JSON.stringify(v)}</script>`;
+    const html = [
+      ld({
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        name: "Painters Pro",
+        founder: { "@type": "Person", name: "Matthew Lymer", jobTitle: "Founder" },
+        review: [{ "@type": "Review", author: { "@type": "Person", name: "Felix Fischer" } }],
+      }),
+      ld({ "@type": "BlogPosting", headline: "Ten tips", author: { "@type": "Person", name: "Nora Writer" } }),
+      ld({ "@type": "Person", name: "Bare Name" }),
+      ld({ "@type": "Person", name: "Mark H.", jobTitle: "Customer" }),
+    ].join("");
+    const names = (path: string) => {
+      const url = new URL(`https://painters.example${path}`);
+      return extractPeople(html, jsonLdObjects(html), url)
+        .map((p) => p.name)
+        .sort();
+    };
+    expect(names("/")).toEqual(["Matthew Lymer"]);
+    expect(names("/team")).toEqual(["Bare Name", "Matthew Lymer"]);
+  });
+
+  test("leadership titles in other languages", () => {
+    expect(seniorityFromTitle("Gründer")).toBe("founder");
+    expect(seniorityFromTitle("Mitgründerin & CTO")).toBe("founder");
+    expect(seniorityFromTitle("Fondatrice")).toBe("founder");
+    expect(seniorityFromTitle("Geschäftsführer")).toBe("c_suite");
+    expect(seniorityFromTitle("Vorstandsvorsitzender VHV a.G.")).toBe("c_suite");
+    expect(seniorityFromTitle("Directeur général")).toBe("c_suite");
+    expect(departmentFromTitle("Fundadora")).toBe("C-Suite");
+    expect(seniorityFromTitle("Gründungsberater")).toBeNull();
+    expect(seniorityFromTitle("Dirigeant")).toBe("c_suite");
+    expect(seniorityFromTitle("Senior Executive Assistant to the CEO")).toBe("senior");
+    expect(seniorityFromTitle("Former CFO, Atlassian")).toBeNull();
+    expect(departmentFromTitle("Former CFO, Atlassian")).toBeNull();
+    expect(seniorityFromTitle("Chief Financial Officer")).toBe("c_suite");
+  });
+
+  test("translated copies of a page are not followed", () => {
+    const here = new URL("https://acme.com/company");
+    expect(isOtherLocale(new URL("https://acme.com/pt-br/company/management"), here)).toBe(true);
+    expect(isOtherLocale(new URL("https://acme.com/de/team"), here)).toBe(true);
+    expect(isOtherLocale(new URL("https://acme.com/en/team"), here)).toBe(false);
+    expect(isOtherLocale(new URL("https://acme.com/team"), here)).toBe(false);
+    expect(isOtherLocale(new URL("https://acme.com/us/about"), here)).toBe(false);
+    expect(isOtherLocale(new URL("https://br.acme.com/company/management"), here)).toBe(true);
+    expect(isOtherLocale(new URL("https://www.acme.com/company/management"), here)).toBe(false);
+    // A German site's own pages are followed from a German page.
+    expect(isOtherLocale(new URL("https://acme.de/de/team"), new URL("https://acme.de/de/"))).toBe(false);
+  });
+
+  test("company names from real homepage titles, countries from codes", () => {
+    expect(companyNameFromTitle(null, "AI Innovation Workspace | Miro", "miro.com")).toBe("Miro");
+    expect(companyNameFromTitle(null, "Elastic: The search database for AI", "elastic.co")).toBe("Elastic");
+    expect(companyNameFromTitle(null, "Product Intelligence Platform for the AI Era", "mixpanel.com")).toBe(
+      "Product Intelligence Platform for the AI Era",
+    );
+    expect(companyNameFromTitle("Mixpanel", "Product Intelligence Platform for the AI Era", "mixpanel.com")).toBe(
+      "Mixpanel",
+    );
+    expect(companyNameFromTitle(null, "| Forlagshuset Lunde", "forlagshusetlunde.no")).toBe("Forlagshuset Lunde");
+    expect(companyNameFromTitle(null, "Startseite", "brbag.de")).toBeNull();
+    expect(companyNameFromTitle(null, "Hjem - Arkiv Finnmark", "arkivfinnmark.no")).toBe("Arkiv Finnmark");
+    expect(countryName("US")).toBe("United States");
+    expect(countryName("USA")).toBe("United States");
+    expect(countryName("gb")).toBe("United Kingdom");
+    expect(countryName("Canada")).toBe("Canada");
+    expect(countryName("Usa")).toBe("Usa");
+    expect(countryName("")).toBeNull();
   });
 });

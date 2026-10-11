@@ -445,20 +445,82 @@ function markupPeople(html: string, sourceUrl: string): FoundPerson[] {
   return out;
 }
 
+/**
+ * Words that never appear in a person's name but often in name-shaped headings on real team and
+ * about pages: product names, plans, customer logos ("The HubSpot Customer Platform", "Small
+ * Business Bundle", "Open AI").
+ */
+const NON_NAME_WORDS = new Set(
+  (
+    "the our your my their and of for with to in on at by from " +
+    "platform bundle business customer customers software cloud data suite hub studio labs lab " +
+    "inc llc ltd gmbh corp corporation company companies group solutions services service products " +
+    "product edition plan plans pricing enterprise starter pro premium free team teams values mission " +
+    "careers jobs news blog press events partners investors board leadership management " +
+    "support contact about home app apps api security privacy terms policy center centre network " +
+    "community foundation capital ventures fund holdings global international digital media studios"
+  ).split(" "),
+);
+
+/** A second check on top of splitName for people found on pages: no product-ish words, no acronyms. */
+export function plausiblePersonName(name: string): boolean {
+  const words = name.split(" ");
+  if (words.some((w) => NON_NAME_WORDS.has(w.toLowerCase().replace(/[.'’]/g, "")))) return false;
+  // "AI", "CEO", "HR": all-caps words of two or more letters are acronyms, not names (initials
+  // are written "J." or "J.R.").
+  if (words.some((w) => /^\p{Lu}{2,}$/u.test(w))) return false;
+  // "Mark H.", "Chris J": review and testimonial signatures, not a full name.
+  return !/^\p{Lu}\.?$/u.test(words[words.length - 1] ?? "");
+}
+
+/**
+ * JSON-LD keys whose Person values are not the company's people: review and testimonial authors,
+ * article bylines, commenters.
+ */
+const NOT_STAFF_KEYS = ["author", "creator", "editor", "contributor", "review", "reviews", "comment", "reviewedBy"];
+
+function notStaff(objects: JsonObject[]): Set<JsonObject> {
+  const out = new Set<JsonObject>();
+  const walk = (v: Json | undefined, depth: number) => {
+    if (depth > 6 || v === null || v === undefined || typeof v !== "object") return;
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x, depth + 1);
+      return;
+    }
+    out.add(v);
+    for (const x of Object.values(v)) walk(x, depth + 1);
+  };
+  for (const obj of objects) {
+    const types = typesOf(obj);
+    // Reviews and articles themselves: everyone in them is an author or a subject.
+    if (types.some((t) => t === "review" || t.endsWith("article") || t === "blogposting" || t === "comment"))
+      for (const key of NOT_STAFF_KEYS.concat("about", "mentions")) walk(obj[key], 0);
+    for (const key of NOT_STAFF_KEYS) walk(obj[key], 0);
+  }
+  return out;
+}
+
 export function extractPeople(html: string, objects: JsonObject[], url: URL): FoundPerson[] {
   const sourceUrl = url.toString();
   const people = new Map<string, FoundPerson>();
   const add = (p: FoundPerson | null) => {
-    if (!p) return;
+    if (!p || !plausiblePersonName(p.name)) return;
     const key = p.name.toLowerCase();
     const existing = people.get(key);
     if (!existing || existing.confidence < p.confidence)
       people.set(key, { ...p, title: p.title ?? existing?.title ?? null });
   };
-  for (const obj of objects) if (typesOf(obj).includes("person")) add(personFromJsonLd(obj, sourceUrl));
-  for (const p of microdataPeople(html, sourceUrl)) add(p);
+  const teamPage = isTeamPath(url);
+  const excluded = notStaff(objects);
+  // Outside team-like pages a person needs a job title to count (a bare name is usually a byline).
+  const addStaff = (p: FoundPerson | null) => {
+    if (p && (teamPage || p.title)) add(p);
+  };
+  for (const obj of objects)
+    if (typesOf(obj).includes("person") && !excluded.has(obj)) addStaff(personFromJsonLd(obj, sourceUrl));
+  for (const p of microdataPeople(html, sourceUrl)) addStaff(p);
   // Card markup only on team-like pages, where a heading + title pair almost always means a person.
-  if (isTeamPath(url)) for (const p of markupPeople(html, sourceUrl)) add(p);
+  if (teamPage) for (const p of markupPeople(html, sourceUrl)) add(p);
   return [...people.values()].slice(0, 100);
 }
 

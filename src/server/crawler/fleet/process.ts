@@ -10,10 +10,13 @@ import {
 } from "@/server/discovery/ats";
 import {
   companyDomainFor,
+  companyNameFromTitle,
+  countryName,
   type FrontierKind,
   hostDelayMs,
   hostKey,
   isLinkOfInterest,
+  isOtherLocale,
   KIND_PRIORITY,
   kindForUrl,
 } from "@/server/discovery/classify";
@@ -60,6 +63,7 @@ export interface ProcessResult {
 }
 
 const ROBOTS_TTL_MS = 24 * 60 * 60 * 1000;
+const ATS_MAX_BYTES = 16_000_000;
 const TRANSIENT: ReadonlySet<SkipReason> = new Set(["timeout", "network", "dns"]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -131,11 +135,6 @@ function bestFact(facts: Fact[], field: FactField): string | null {
   return best?.value ?? null;
 }
 
-function cleanTitle(title: string | null): string | null {
-  const first = title?.split(/\s+[|–—·-]\s+/)[0]?.trim();
-  return first && first.length <= 80 ? first : null;
-}
-
 function companyPatch(extract: PageExtract, url: URL, kind: FrontierKind): CompanyPatch {
   const facts = extract.facts;
   const year = (v: string | null) => (v && /^\d{4}$/.test(v) ? Number(v) : null);
@@ -143,15 +142,16 @@ function companyPatch(extract: PageExtract, url: URL, kind: FrontierKind): Compa
   return {
     name:
       bestFact(facts, "name") ??
-      bestFact(facts, "siteName") ??
-      (kind === "homepage" ? cleanTitle(extract.title) : null),
+      (kind === "homepage"
+        ? companyNameFromTitle(bestFact(facts, "siteName"), extract.title, companyDomainFor(url))
+        : bestFact(facts, "siteName")),
     websiteUrl: kind === "homepage" ? url.origin : null,
     description: bestFact(facts, "description"),
     phone: bestFact(facts, "phone") ?? extract.phones[0]?.value ?? null,
     foundedYear: year(bestFact(facts, "foundedYear")),
     employeeCount: employees && /^\d+$/.test(employees) ? Number(employees) : null,
     city: bestFact(facts, "city"),
-    country: bestFact(facts, "country"),
+    country: countryName(bestFact(facts, "country")),
     // Public profile links the company publishes itself: stored, never fetched.
     linkedinUrl: bestFact(facts, "linkedinUrl"),
     twitterUrl: bestFact(facts, "twitterUrl"),
@@ -218,7 +218,7 @@ async function processHtml(
   if (row.depth + 1 <= config.maxDepth) {
     for (const link of extract.links) {
       const next = normalizeUrl(link.url);
-      if (!next || !sameSite(next, url) || isDeniedUrl(next)) continue;
+      if (!next || !sameSite(next, url) || isDeniedUrl(next) || isOtherLocale(next, url)) continue;
       const kind = kindForUrl(next);
       if (!isLinkOfInterest(kind)) continue;
       items.push({ url: next.toString(), kind, depth: row.depth + 1, discoveredFrom: url.toString() });
@@ -290,8 +290,19 @@ async function processAts(claim: Claim, url: URL, body: string): Promise<Process
   const board = atsBoardFromApiUrl(url.toString());
   const domain = companyDomainOf(claim);
   if (!board || !domain) return { outcome: { type: "skipped", reason: "unsupported", requested: true }, stats: {} };
-  const company = (await indexCompanyByDomain(domain)) ?? null;
-  if (!company || (await isOptedOut({ domain }))) {
+  if (await isOptedOut({ domain })) {
+    return { outcome: { type: "skipped", reason: "opted_out", statusCode: 200, requested: true }, stats: {} };
+  }
+  // A board listed by an operator can be read before the company's site has been crawled: the
+  // company row is created from the domain and filled in when its homepage is.
+  const company =
+    (await indexCompanyByDomain(domain)) ??
+    (await upsertIndexCompany(
+      domain,
+      { websiteUrl: `https://${domain}` },
+      { source: `ats:${board.provider}`, url: url.toString(), retrievedAt: new Date().toISOString(), fields: [] },
+    ));
+  if (!company) {
     return { outcome: { type: "skipped", reason: "opted_out", statusCode: 200, requested: true }, stats: {} };
   }
   const jobs = parseAtsJobs(board.provider, body);
@@ -367,9 +378,14 @@ export async function processClaim(claim: Claim, toggles: PipelineToggles): Prom
     userAgent: config.userAgent,
     allowPrivate: config.allowPrivate,
     timeoutMs: config.fetchTimeoutMs,
-    maxBytes: config.maxPageBytes,
+    // Job-board APIs return every open role with its full description in one document (Ashby:
+    // 2–5 MB for a few hundred roles), so they get a larger cap than pages.
+    maxBytes: row.kind === "ats" ? ATS_MAX_BYTES : config.maxPageBytes,
     maxRedirects: 3,
     expect: EXPECT[row.kind],
+    // Pages and feeds are read up to the cap and parsed as far as they go (many homepages are
+    // several MB of inline scripts); job-board JSON must be whole.
+    truncate: EXPECT[row.kind] !== "json",
     checkHop: async (hop) => {
       if (isDeniedUrl(hop)) return "offsite";
       if (hostKey(hop) !== host) {
@@ -388,6 +404,20 @@ export async function processClaim(claim: Claim, toggles: PipelineToggles): Prom
         { url: (target as URL).toString(), kind: row.kind, depth: row.depth, discoveredFrom: url.toString() },
       ]);
       return { outcome: { type: "skipped", reason: "redirected", statusCode: res.status, requested: true }, stats: {} };
+    }
+    // A seeded homepage that moved to another domain (notion.so → notion.com, dbtlabs.com →
+    // getdbt.com): the company lives there now, so its new homepage is queued as a seed of its own.
+    if (
+      res.reason === "offsite" &&
+      target &&
+      row.kind === "homepage" &&
+      row.depth === 0 &&
+      !sameSite(target, url) &&
+      !isDeniedUrl(target)
+    ) {
+      const home = new URL("/", (target as URL).origin);
+      await enqueue([{ url: home.toString(), kind: "homepage", depth: 0, discoveredFrom: url.toString() }]);
+      return { outcome: { type: "skipped", reason: "moved", statusCode: res.status, requested: true }, stats: {} };
     }
     return { outcome: failure(res), stats: {} };
   }

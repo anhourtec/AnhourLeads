@@ -20,6 +20,10 @@ import http from "node:http";
  *  - wikidata-disco.localhost a canned SPARQL endpoint.
  *  - blocked-disco.localhost  robots.txt disallows everything.
  *  - optout-disco.localhost   a company used for opt-out checks.
+ *  - bulky-disco.localhost    real-web shapes: a ~2.5 MB homepage (facts at the top, inline script
+ *                             after), a team page with product and logo headings that look like
+ *                             names, a careers page linking an Ashby board whose API answer is ~3 MB.
+ *  - moved-disco.localhost    a homepage that moved to another domain (301 → newhome-disco.localhost).
  *  - control.localhost        GET /__log (requests seen), POST /__team?variant=v1|v2 (team page).
  *
  * The request log and the team variant live in whichever worker started the server; the control
@@ -131,7 +135,36 @@ function sparqlResult(): unknown {
   };
 }
 
-function route(host: string, url: URL): { status: number; type: string; body: string } {
+/** ~2.5 MB of inline script, like the bundles many real homepages inline after their head. */
+const BULK_SCRIPT = `<script>window.__DATA__=${JSON.stringify("x".repeat(2_500_000))}</script>`;
+
+const BULKY_ORG = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: "Bulky Systems",
+  description: "Bulky Systems ships heavy pages.",
+};
+
+/** An Ashby job board answer with full descriptions: ~3 MB for 300 roles. */
+function ashbyBoard(): string {
+  const jobs = Array.from({ length: 300 }, (_, i) => ({
+    id: `job-${i}`,
+    title: i === 0 ? "Staff Platform Engineer" : `Role ${i}`,
+    department: "Engineering",
+    team: "Platform",
+    location: "Remote",
+    publishedAt: "2026-09-01T00:00:00.000+00:00",
+    isListed: true,
+    jobUrl: `https://jobs.ashbyhq.com/bulkydisco/job-${i}`,
+    descriptionHtml: `<p>${"Description. ".repeat(500)}</p>`,
+    descriptionPlain: "Description. ".repeat(250),
+  }));
+  return JSON.stringify({ apiVersion: "1", jobs });
+}
+
+type Routed = { status: number; type: string; body: string; headers?: Record<string, string> };
+
+function route(host: string, url: URL): Routed {
   const site = host.split(":")[0]?.replace(/-disco\.localhost$/, "") ?? "";
   const path = url.pathname;
   const ok = (type: string, body: string) => ({ status: 200, type, body });
@@ -180,6 +213,7 @@ function route(host: string, url: URL): { status: number; type: string; body: st
     if (path === "/robots.txt") return ok("text/plain", "User-agent: *\nAllow: /\n");
     if (path === "/v1/boards/nimbusdisco/jobs") return ok("application/json", JSON.stringify(GREENHOUSE));
     if (path === "/v0/postings/nimbusdisco") return ok("application/json", JSON.stringify(LEVER));
+    if (path === "/posting-api/job-board/bulkydisco") return ok("application/json", ashbyBoard());
     return { status: 404, type: "application/json", body: "{}" };
   }
   if (site === "wikidata") {
@@ -193,6 +227,41 @@ function route(host: string, url: URL): { status: number; type: string; body: st
   if (site === "blocked") {
     if (path === "/robots.txt") return ok("text/plain", "User-agent: *\nDisallow: /\n");
     return ok(H, html("Blocked", "<p>Should never be fetched.</p>"));
+  }
+  if (site === "bulky") {
+    if (path === "/robots.txt") return { status: 404, type: "text/plain", body: "" };
+    if (path === "/")
+      return ok(
+        H,
+        html(
+          "Bulky Systems",
+          `<h1>Bulky Systems</h1><a href="/team">Team</a> <a href="/careers">Careers</a>${BULK_SCRIPT}`,
+          `<script type="application/ld+json">${JSON.stringify(BULKY_ORG)}</script>`,
+        ),
+      );
+    if (path === "/team")
+      return ok(
+        H,
+        html(
+          "Team | Bulky Systems",
+          `<h3>Mary Major</h3><p>Chief Executive Officer</p>
+           <h3>The Bulky Customer Platform</h3><p>All of our marketing and sales software in one place.</p>
+           <h3>Small Business Bundle</h3><p>The starter edition of each product</p>
+           <h3>Open AI</h3><p>Runs product operations in one shared system.</p>`,
+        ),
+      );
+    if (path === "/careers")
+      return ok(H, html("Careers", `<a href="https://jobs.ashbyhq.com/bulkydisco">Open roles</a>`));
+    return notFound;
+  }
+  if (site === "moved") {
+    if (path === "/robots.txt") return { status: 404, type: "text/plain", body: "" };
+    return { status: 301, type: H, body: "", headers: { location: `http://${disco("newhome")}/` } };
+  }
+  if (site === "newhome") {
+    if (path === "/robots.txt") return { status: 404, type: "text/plain", body: "" };
+    if (path === "/") return ok(H, html("Newhome", "<h1>Newhome</h1>"));
+    return notFound;
   }
   if (site === "optout" || site === "wikiacme" || site === "wikibeta") {
     if (path === "/robots.txt") return { status: 404, type: "text/plain", body: "" };
@@ -223,7 +292,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
   state.log.push({ host, path: url.pathname, userAgent: String(req.headers["user-agent"] ?? ""), at: Date.now() });
   const out = route(host, url);
-  res.writeHead(out.status, { "content-type": out.type });
+  res.writeHead(out.status, { "content-type": out.type, ...out.headers });
   res.end(out.body);
 }
 
@@ -388,4 +457,102 @@ export async function insertJob(companyId: string, title: string, url: string, d
      values (gen_random_uuid()::text, $1, $2, $3, 'Greenhouse', now() - ($4 || ' days')::interval)`,
     [companyId, title, url, String(daysAgo)],
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Find people / Find companies fixtures (discovery-search specs)             */
+/* -------------------------------------------------------------------------- */
+
+export interface SearchIndexFixture {
+  /** Shared word in every company name, for filtering the index down to this run. */
+  tag: string;
+  domains: string[];
+  companies: { lumen: string; quarry: string; nosize: string };
+  people: { nora: string; omar: string; pia: string; quinn: string };
+}
+
+/**
+ * Three index companies and four people under `*.<tag>.search.test`, so a spec can narrow the
+ * shared index to its own rows (`company=<tag>` or `domains`). Clean up with cleanSearchIndex.
+ */
+export async function seedSearchIndex(tag: string): Promise<SearchIndexFixture> {
+  const lumenDomain = `lumen.${tag}.search.test`;
+  const quarryDomain = `quarry.${tag}.search.test`;
+  const nosizeDomain = `nosize.${tag}.search.test`;
+  const lumen = await insertIndexCompany({
+    domain: lumenDomain,
+    name: `Lumen ${tag} Robotics`,
+    industry: "Industrial Automation",
+    country: "Canada",
+    city: "Vancouver",
+    employeeCount: 80,
+    employeeRange: "51-100",
+    foundedYear: 2012,
+    technologies: ["Shopify"],
+    keywords: ["robotics", "warehouse"],
+    emailPattern: "{first}",
+  });
+  const quarry = await insertIndexCompany({
+    domain: quarryDomain,
+    name: `Quarry ${tag} Analytics`,
+    industry: "Computer Software",
+    country: "Germany",
+    city: "Munich",
+    employeeCount: 900,
+    employeeRange: "501-1000",
+    foundedYear: 2001,
+    keywords: ["analytics"],
+  });
+  const nosize = await insertIndexCompany({ domain: nosizeDomain, name: `Nosize ${tag} Labs`, country: "France" });
+  const nora = await insertIndexPerson({
+    companyId: lumen,
+    fullName: `Nora ${tag}`,
+    title: "Chief Executive Officer",
+    seniority: "c_suite",
+    department: "C-Suite",
+    publishedEmail: `nora@${lumenDomain}`,
+    sourceUrl: `https://${lumenDomain}/team`,
+  });
+  const omar = await insertIndexPerson({
+    companyId: lumen,
+    fullName: `Omar ${tag}`,
+    title: "VP Sales",
+    seniority: "vp",
+    department: "Sales",
+    sourceUrl: `https://${lumenDomain}/team`,
+  });
+  const pia = await insertIndexPerson({
+    companyId: quarry,
+    fullName: `Pia ${tag}`,
+    title: "Head of Marketing",
+    seniority: "head",
+    department: "Marketing",
+    sourceUrl: `https://${quarryDomain}/about`,
+  });
+  const quinn = await insertIndexPerson({
+    companyId: nosize,
+    fullName: `Quinn ${tag}`,
+    title: "Founder",
+    seniority: "founder",
+    department: "C-Suite",
+    sourceUrl: `https://${nosizeDomain}/`,
+  });
+  return {
+    tag,
+    domains: [lumenDomain, quarryDomain, nosizeDomain],
+    companies: { lumen, quarry, nosize },
+    people: { nora, omar, pia, quinn },
+  };
+}
+
+/** Remove a seedSearchIndex run: workspace copies (any workspace) and the index rows. */
+export async function cleanSearchIndex(tag: string): Promise<void> {
+  const like = `%.${tag}.search.test`;
+  await q(
+    `delete from contact where email like $1 or company_id in (select id from company where domain like $1)
+       or source = 'discovery_index' and (first_name || ' ' || coalesce(last_name, '')) ilike $2`,
+    [`%${like}`, `% ${tag}`],
+  );
+  await q("delete from company where domain like $1", [like]);
+  await q("delete from index_company where domain like $1", [like]);
 }

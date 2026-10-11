@@ -57,7 +57,7 @@ export function fleetConfig(): FleetConfig {
     maxAttempts: int("CRAWLER_MAX_ATTEMPTS", 5, 1, 20),
     leaseMs: 5 * 60_000,
     fetchTimeoutMs: 10_000,
-    maxPageBytes: 1_000_000,
+    maxPageBytes: 2_000_000,
     maxDepth: 2,
     heartbeatFile: process.env.CRAWLER_HEARTBEAT_FILE ?? "/tmp/crawler-heartbeat",
     allowPrivate: env().CRAWLER_ALLOW_PRIVATE_HOSTS,

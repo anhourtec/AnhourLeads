@@ -9,6 +9,7 @@ import {
   type FrontierKind,
   hostKey,
   KIND_PRIORITY,
+  RESERVED_HOST_PATTERN,
   recrawlIntervalMs,
 } from "@/server/discovery/classify";
 import { fleetConfig } from "@/server/discovery/config";
@@ -149,12 +150,15 @@ type ClaimedRow = { id: string };
  */
 export async function claimNext(options: { hosts?: string[] } = {}): Promise<Claim | null> {
   const { leaseMs } = fleetConfig();
+  // Without an explicit host list (the long-running workers), never claim local fixture hosts:
+  // reserved names (RFC 6761 / 2606) and loopback addresses are never real public sites, and the
+  // test harness drives them itself through run_once.
   const hostFilter = options.hosts?.length
     ? sql`and h.host in (${sql.join(
         options.hosts.map((h) => sql`${h}`),
         sql`, `,
       )})`
-    : sql``;
+    : sql`and h.host !~* ${RESERVED_HOST_PATTERN}`;
   return db.transaction(async (tx) => {
     const hosts = await tx.execute<{ host: string }>(sql`
       select h.host from crawl_host h

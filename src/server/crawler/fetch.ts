@@ -31,6 +31,12 @@ export interface SafeFetchOptions {
   expect: "html" | "text" | "json" | "xml";
   /** Called for every redirect target. Return a skip reason to stop there. */
   checkHop?: (url: URL) => Promise<SkipReason | null>;
+  /**
+   * Keep the first `maxBytes` of a longer body instead of giving up ("too_large"). For HTML pages,
+   * where the facts and people usually come well before the end of a page bloated by inline
+   * scripts; never for JSON, which would not parse.
+   */
+  truncate?: boolean;
 }
 
 export type SafeFetchResult =
@@ -41,6 +47,8 @@ export type SafeFetchResult =
       headers: Partial<Record<string, string>>;
       body: string;
       redirects: number;
+      /** The body was cut at maxBytes (only with `truncate`). */
+      truncated?: boolean;
     }
   | { ok: false; url: string; status: number | null; reason: SkipReason; detail?: string };
 
@@ -121,6 +129,7 @@ interface HopResult {
   headers: Partial<Record<string, string>>;
   location: string | null;
   body?: string;
+  truncated?: boolean;
   failure?: { reason: SkipReason; detail?: string };
 }
 
@@ -164,7 +173,7 @@ function requestOnce(url: URL, opts: Required<Omit<SafeFetchOptions, "checkHop">
           return done({ status, headers, location: null, failure: { reason: "not_html", detail: contentType } });
         }
         const declared = Number(headers["content-length"] ?? "0");
-        if (declared > opts.maxBytes && !headers["content-encoding"]) {
+        if (declared > opts.maxBytes && !headers["content-encoding"] && !opts.truncate) {
           res.destroy();
           return done({
             status,
@@ -182,6 +191,12 @@ function requestOnce(url: URL, opts: Required<Omit<SafeFetchOptions, "checkHop">
           if (size > opts.maxBytes) {
             res.destroy();
             if (stream !== res) stream.destroy();
+            if (opts.truncate) {
+              chunks.push(chunk.subarray(0, chunk.length - (size - opts.maxBytes)));
+              const body = new TextDecoder(charsetOf(contentType)).decode(Buffer.concat(chunks));
+              done({ status, headers, location: null, body, truncated: true });
+              return;
+            }
             done({
               status,
               headers,
@@ -234,6 +249,7 @@ export async function safeFetch(input: string | URL, options: SafeFetchOptions):
     maxBytes: options.maxBytes ?? 1_000_000,
     maxRedirects: options.maxRedirects ?? 3,
     expect: options.expect,
+    truncate: options.truncate ?? false,
   };
   let url = typeof input === "string" ? normalizeUrl(input) : normalizeUrl(input.toString());
   if (!url) return { ok: false, url: String(input), status: null, reason: "http_error", detail: "unsupported URL" };
@@ -269,6 +285,7 @@ export async function safeFetch(input: string | URL, options: SafeFetchOptions):
       headers: result.headers,
       body: result.body ?? "",
       redirects: hop,
+      ...(result.truncated ? { truncated: true } : {}),
     };
   }
   return { ok: false, url: url.toString(), status: null, reason: "too_many_redirects" };
