@@ -49,7 +49,9 @@ export function AcceptInvite({
       setError("This invitation is invalid, expired, or was sent to a different email address.");
       return;
     }
-    router.replace("/dashboard/overview");
+    // Joining a workspace starts onboarding there (viewers skip it). Failure here isn't fatal.
+    const started = await fetch("/api/v1/onboarding", { method: "POST" }).catch(() => null);
+    router.replace(started?.ok ? "/onboarding" : "/dashboard/home");
     router.refresh();
   }
 

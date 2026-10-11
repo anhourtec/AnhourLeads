@@ -69,7 +69,7 @@ export const PREFERENCE_REGISTRY = {
 
   font: definePreference({
     values: fontKeys,
-    defaultValue: "geist",
+    defaultValue: "inter",
     persistence: "client-cookie",
     attribute: "data-font",
   }),

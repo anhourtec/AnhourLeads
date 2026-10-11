@@ -46,7 +46,7 @@ export function SignInForm() {
       return;
     }
     // Only same-site relative paths are followed.
-    router.replace(next?.startsWith("/") && !next.startsWith("//") ? next : "/dashboard/overview");
+    router.replace(next?.startsWith("/") && !next.startsWith("//") ? next : "/dashboard/home");
     router.refresh();
   }
 

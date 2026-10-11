@@ -24,7 +24,7 @@ export default async function NotFound() {
           </p>
         </div>
         <Button asChild size="sm">
-          <Link href="/dashboard/overview">
+          <Link href="/dashboard/home">
             <ArrowLeft data-icon="inline-start" aria-hidden="true" />
             Go to overview
           </Link>

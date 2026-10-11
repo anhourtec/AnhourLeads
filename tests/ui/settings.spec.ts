@@ -12,7 +12,7 @@ const PAGES: { path: string; title: string; permission: Permission | null }[] = 
   { path: "/dashboard/settings/do-not-contact", title: "Do not contact", permission: "suppression:read" },
   { path: "/dashboard/settings/api-keys", title: "API keys", permission: "apikey:read" },
   { path: "/dashboard/settings/audit-log", title: "Audit log", permission: "audit:read" },
-  { path: "/dashboard/account", title: "Account", permission: null },
+  { path: "/dashboard/settings/profile", title: "Profile", permission: null },
 ];
 
 test.describe("settings screens", () => {
@@ -45,7 +45,10 @@ test.describe("settings screens", () => {
           can(role, "contact:delete") && can(role, "suppression:create") ? 1 : 0,
         );
         // The shared not-found page's own logs can arrive late; they aren't from these screens.
-        const ours = errors.filter((e) => !/status of 404|Encountered a script tag/.test(e));
+        // React's dev-only Performance.measure timing bug is not an app error.
+        const ours = errors.filter(
+          (e) => !/status of 404|Encountered a script tag|cannot have a negative time stamp/.test(e),
+        );
         expect(ours).toEqual([]);
       } finally {
         await context.close();
@@ -133,7 +136,9 @@ test.describe("settings screens", () => {
       await expect(page.getByLabel("Area")).toHaveValue("task.");
       await expectNoHorizontalOverflow(page);
 
+      // The old account page redirects to the profile in the settings shell.
       await page.goto("/dashboard/account");
+      await expect(page).toHaveURL(/\/dashboard\/settings\/profile$/);
       await expect(page.getByLabel("Email")).toHaveValue(ACME.owner);
       await expect(page.getByRole("button", { name: "Change password" })).toBeDisabled();
       await expectNoHorizontalOverflow(page);

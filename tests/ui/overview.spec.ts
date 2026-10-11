@@ -1,33 +1,23 @@
 import { expect as baseExpect, test } from "@playwright/test";
 
-import { can, ROLES } from "../../src/lib/rbac/permissions";
+import { ROLES } from "../../src/lib/rbac/permissions";
 import { ACME } from "../support/session";
-import { expectNoHorizontalOverflow, openAs, shot } from "./admin-ui";
+import { expectNoHorizontalOverflow, openAs } from "./admin-ui";
 
 test.describe.configure({ timeout: 90_000 });
 const expect = baseExpect.configure({ timeout: 15_000 });
 
-test.describe("overview screen", () => {
+// The overview became Home (tests/ui/home.spec.ts covers its layouts). Old links keep working.
+test.describe("overview redirects to home", () => {
   for (const role of ROLES) {
-    test(`renders for ${role}`, async ({ browser }, info) => {
+    test(`for ${role}`, async ({ browser }) => {
       const { context, page, errors } = await openAs(browser, ACME[role], { dark: role === "viewer" });
       try {
         const res = await page.goto("/dashboard/overview");
         expect(res?.status()).toBe(200);
-        await expect(page.getByRole("heading", { level: 1, name: /Welcome back, Acme/ })).toBeVisible();
-        const kpis = page.getByRole("region", { name: "Key numbers" });
-        await expect(kpis.getByText("People", { exact: true })).toBeVisible();
-        await expect(kpis.getByText("Verified emails")).toBeVisible();
-        await expect(kpis.getByText("Open pipeline")).toBeVisible();
-        await expect(page.getByText("Pipeline by stage")).toBeVisible();
-        await expect(page.getByText("My tasks due")).toBeVisible();
-        const activity = page.getByText("Recent activity");
-        if (can(role, "audit:read")) await expect(activity).toBeVisible();
-        else await expect(activity).toHaveCount(0);
+        await expect(page).toHaveURL(/\/dashboard\/home$/);
+        await expect(page.getByRole("button", { name: /Home layout:/ })).toBeVisible();
         await expectNoHorizontalOverflow(page);
-        if (role === "owner" || role === "viewer") {
-          await page.screenshot({ path: shot(`overview-${role}`, info.project.name), fullPage: true });
-        }
         expect(errors).toEqual([]);
       } finally {
         await context.close();

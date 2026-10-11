@@ -60,7 +60,7 @@ export function SignUpForm() {
       setError(body.error ?? "Your account was created, but the workspace wasn't. Sign in and try again.");
       return;
     }
-    router.replace("/dashboard/overview");
+    router.replace("/onboarding");
     router.refresh();
   }
 

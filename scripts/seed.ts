@@ -366,10 +366,23 @@ async function main() {
     createdById: owners.owner,
   });
   await seedAcmeData(acme, owners);
+  // Demo accounts have already been through onboarding, so they land on Home, not the first-run flow.
+  await db.insert(schema.onboardingState).values(
+    DEMO_ROLES.map((role) => ({
+      organizationId: acme,
+      userId: owners[role],
+      role: role === "owner" ? "founder" : "sdr_ae",
+      goals: ["outbound", "enrichment"],
+      finishedAt: new Date(),
+    })),
+  );
 
   const globex = await createWorkspace("Globex", "globex", {});
   const globexOwner = await createUser("owner@globex.test", "Globex Owner", DEMO_PASSWORD);
   await addMember(globex, globexOwner, "owner");
+  await db
+    .insert(schema.onboardingState)
+    .values({ organizationId: globex, userId: globexOwner, finishedAt: new Date() });
   await db.insert(schema.company).values({
     organizationId: globex,
     name: "Globex Secret Prospect",

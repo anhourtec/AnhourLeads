@@ -11,14 +11,19 @@ How every screen looks. Follow this on every change (CLAUDE.md rule 9). It cover
 - **Provenance is visible.** Where a value came from and how old it is sits next to the value, in muted text, never hidden in a tooltip alone.
 - **One system.** The same token, type class and component everywhere. A workspace's brand changes its name and colour, never fonts or layout.
 
+## Reference parity
+
+The app's structure, layout, typography, navigation, flows, modals and helpers follow the reference app recorded in [docs/reference/apollo-ui.md](docs/reference/apollo-ui.md). **Only the colours differ**: we keep our brand tokens and each workspace's brand colour. We never copy the reference's logo, icons, illustrations or copy; icons are Lucide and the words are our own.
+
 ## Fonts
 
 | Use | Font | How | Weights |
 | --- | --- | --- | --- |
-| All interface text: headings, body, labels, buttons, tables | **Geist** (sans) | default `font-sans` (`--font-geist`, loaded by `next/font` in `src/lib/fonts/registry.ts`) | 400 body, 500 headings and emphasis, 600 only for the product name in the sidebar |
-| Numbers in tables and KPIs, email addresses, domains, URLs, ids, API keys, code, CSV headers | **Geist Mono** | `font-mono` (`--font-geist-mono`) | 400, 500 for KPI values |
+| Body, navigation, tables, forms, buttons | **Inter** (sans, OFL) | default `font-sans` (`--font-inter`, loaded by `next/font` in `src/lib/fonts/registry.ts`) | 400 body, 500 emphasis and active navigation, 600 only for the product name in the sidebar |
+| Page titles, card and section titles, large display numbers | **Hanken Grotesk** (OFL) | `font-heading` / `--font-display`; every `h1` uses it; `CardTitle` uses it | 400 for page titles, 500 for card titles |
+| Table column headers, small caps labels, counts, ids, emails, domains, URLs, API keys, code | **Roboto Mono** (Apache 2.0) | `font-mono` (`--font-roboto-mono`) | 400, 500 for KPI values |
 
-- Default font preference is `geist`. The layout controls' font picker from the admin template stays available for personal preference, but screens are designed and tested in Geist.
+- Default font preference is `inter`. The display-preferences font picker (avatar menu → Display preferences) stays available for personal preference, but screens are designed and tested in Inter. Headings and mono labels are fixed and don't follow the picker.
 - Use `tabular-nums` on numeric columns and KPI values so digits line up.
 - Never load another font for a feature. Never set `font-family` inline.
 
@@ -59,19 +64,24 @@ Every screen must work in both. The theme switcher sets `.dark` on `<html>`; bra
 
 | Role | Classes |
 | --- | --- |
-| Page title (one per page) | `text-2xl font-medium tracking-tight` |
+| Page title (one per page) | `page-title` (Hanken Grotesk, `text-2xl`, weight 400, slight negative tracking). Large first-run titles add `text-3xl`. |
 | Page description | `text-sm text-muted-foreground` |
-| Section / card title | `text-base font-medium` (CardTitle) |
-| Body, table cells, form fields | `text-sm` |
+| Section / card title | `text-base font-medium` (CardTitle, display font) |
+| Body, table cells, form fields | `text-sm` (Inter) |
+| Table column headers | `table-head-mono`: Roboto Mono, 11 px, uppercase, letter-spaced, muted. Applied to every `TableHead` automatically (`[data-slot="table-head"]` in `globals.css`). |
 | Labels, meta, provenance, timestamps, helper text | `text-xs text-muted-foreground` |
-| KPI value | `text-2xl font-medium font-mono tabular-nums` |
-| Code, keys, emails | `font-mono text-xs` or `text-sm` |
+| KPI value | `font-heading text-2xl tabular-nums` (or `font-mono` for dense numeric tiles) |
+| Code, keys, emails, counts | `font-mono text-xs` or `text-sm` |
 
-Display weight is 500, never bold 700 for headings. Line length for prose stays under about 70 characters (`max-w-prose`).
+Display weight is 400 for page titles and 500 for card titles; never bold 700 for headings. Line length for prose stays under about 70 characters (`max-w-prose`).
 
 ## Layout and spacing
 
-- The dashboard shell (sidebar + 48 px header) comes from `src/app/(main)/dashboard/layout.tsx`. Pages render inside its padding (`p-4 md:p-6`).
+- The dashboard shell comes from `src/app/(main)/dashboard/layout.tsx`: a 240 px sidebar and a 48 px top bar. Pages render inside its padding (`p-4 md:p-6`).
+- **Sidebar** (`src/navigation/sidebar/sidebar-items.ts`): Home (with a calls shortcut) and AI Assistant, then collapsible groups with an icon and a chevron (Prospect and enrich, Engage, Win deals, Tools and automation, Inbound, Saved records) whose links are indented text without icons. Open/closed state is kept in the `nav_groups_closed` cookie. Footer: the onboarding hub card (progress, dismissible), "Email setup and health" and the "Admin settings" menu. On phones the sidebar is a sheet.
+- **Top bar**: centred "Search or ask a question" box (⌘K command palette), then a usage link, the AI Assistant button (brand-filled, only with `ai:use`), the activity and notifications bell, and the avatar menu (profile, notification settings, workspace switch, theme, display preferences, sign out). No other header icons.
+- **Settings shell**: under `/dashboard/settings` the sidebar swaps to Back, "Search settings", Settings overview and collapsible setting groups (`src/navigation/settings/settings-items.ts`). The overview is a two-column grid of cards (icon, title, one-line description, links).
+- **First run**: `/onboarding` is a full-page flow outside the shell, in the workspace brand.
 - Page structure: header row (title + description on the left, actions on the right; wraps under each other below `sm`), then content in a `flex flex-col gap-4 md:gap-6` stack.
 - Cards: the `Card` component, default radius and border, `gap-4` inside. KPI rows use `grid gap-4 sm:grid-cols-2 xl:grid-cols-4`.
 - Tables live in a card or bordered container that scrolls horizontally on its own (`overflow-x-auto`). **The page itself never scrolls horizontally**, including at 390 px wide.
@@ -121,3 +131,4 @@ Display weight is 500, never bold 700 for headings. Line length for prose stays 
 | When (UTC) | Who | What |
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created: fonts, colour, type scale, layout, components, copy, white-label rules |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Reference parity rule (only colours differ); Inter / Hanken Grotesk / Roboto Mono; `page-title` and mono table headers; sidebar, top bar, settings shell and first-run layout |

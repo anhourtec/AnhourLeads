@@ -3,6 +3,7 @@ import {
   Figtree,
   Geist,
   Geist_Mono,
+  Hanken_Grotesk,
   Inter,
   JetBrains_Mono,
   Lora,
@@ -15,6 +16,7 @@ import {
   Public_Sans,
   Raleway,
   Roboto,
+  Roboto_Mono,
   Roboto_Slab,
 } from "next/font/google";
 
@@ -23,6 +25,20 @@ import { GeistPixelSquare } from "geist/font/pixel";
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
+});
+
+/** Headings and display numbers (BRANDING.md: open-licence stand-in for a display grotesk). */
+const hankenGrotesk = Hanken_Grotesk({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-hanken-grotesk",
+});
+
+/** Mono labels: table column headers, counts, ids, emails, code. */
+const robotoMono = Roboto_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-roboto-mono",
 });
 
 const notoSans = Noto_Sans({
@@ -108,13 +124,13 @@ const playfairDisplay = Playfair_Display({
 });
 
 export const fontRegistry = {
-  geist: {
-    label: "Geist",
-    font: geist,
-  },
   inter: {
     label: "Inter",
     font: inter,
+  },
+  geist: {
+    label: "Geist",
+    font: geist,
   },
   notoSans: {
     label: "Noto Sans",
@@ -186,8 +202,11 @@ export type FontKey = keyof typeof fontRegistry;
 
 export const fontKeys = Object.keys(fontRegistry) as FontKey[];
 
-export const fontVars = Object.values(fontRegistry)
-  .map(({ font }) => font.variable)
+/** Fixed families that aren't user-selectable: the heading and the mono font. */
+const fixedFonts = [hankenGrotesk, robotoMono];
+
+export const fontVars = [...Object.values(fontRegistry).map(({ font }) => font), ...fixedFonts]
+  .map((font) => font.variable)
   .join(" ");
 
 export const fontOptions = fontKeys.map((key) => ({

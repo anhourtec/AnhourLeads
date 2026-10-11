@@ -9,6 +9,7 @@ import { env } from "@/server/env";
 import { badRequest, conflict, forbidden, tooManyRequests, unauthorized } from "@/server/http/errors";
 import { hitLimit, LIMITS } from "@/server/http/rate-limit";
 import { errorResponse, readJson } from "@/server/http/route";
+import { startOnboarding } from "@/server/services/onboarding";
 import { requestHost } from "@/server/tenancy/host";
 
 import { randomUUID } from "node:crypto";
@@ -71,6 +72,8 @@ export async function POST(req: NextRequest) {
         entityId: organizationId,
       });
     });
+    // The new owner goes through onboarding (goals, mailbox) on their first visit to the app.
+    await startOnboarding(organizationId, session.user.id, "owner");
     return NextResponse.json({ workspace: { id: organizationId, name: workspaceName } }, { status: 201 });
   } catch (error) {
     return errorResponse(error, requestId);

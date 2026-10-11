@@ -1,22 +1,15 @@
 import {
-  Building2,
-  CheckSquare,
-  Globe,
-  Handshake,
-  Inbox,
-  KeyRound,
-  LayoutDashboard,
-  ListChecks,
+  Bookmark,
+  CircleDollarSign,
+  House,
+  LogIn,
   type LucideIcon,
-  Palette,
-  Radar,
-  ScrollText,
+  Phone,
+  Search,
   Send,
   ServerCog,
-  Settings,
-  ShieldBan,
-  Users,
-  UsersRound,
+  Sparkles,
+  Workflow,
 } from "lucide-react";
 
 import { can, type Permission, type Role } from "@/lib/rbac/permissions";
@@ -47,11 +40,21 @@ interface NavItemBase {
   newTab?: boolean;
 }
 
+/** A small icon button on the right of a top-level link (Home's calls shortcut). */
+export interface NavShortcut {
+  title: string;
+  url: string;
+  icon: LucideIcon;
+  permission?: Permission;
+}
+
 export interface NavMainLinkItem extends NavItemBase {
   url: string;
+  shortcut?: NavShortcut;
   subItems?: never;
 }
 
+/** A collapsible group: icon, label and chevron, with its links indented below. */
 export interface NavMainParentItem extends NavItemBase {
   subItems: NavSubItem[];
 }
@@ -64,83 +67,96 @@ export interface NavGroup {
   items: NavMainItem[];
 }
 
+/** Cookie holding the ids of collapsed sidebar groups, read on the server so the first paint matches. */
+export const NAV_GROUPS_COOKIE = "nav_groups_closed";
+
 export const sidebarItems: NavGroup[] = [
   {
     id: 1,
-    label: "Prospect",
     items: [
-      { id: "overview", title: "Overview", url: "/dashboard/overview", icon: LayoutDashboard },
-      { id: "people", title: "People", url: "/dashboard/people", icon: Users, permission: "contact:read" },
-      { id: "companies", title: "Companies", url: "/dashboard/companies", icon: Building2, permission: "company:read" },
-      { id: "lists", title: "Lists", url: "/dashboard/lists", icon: ListChecks, permission: "list:read" },
-      { id: "research", title: "Research", url: "/dashboard/research", icon: Radar, permission: "crawler:read" },
+      {
+        id: "home",
+        title: "Home",
+        url: "/dashboard/home",
+        icon: House,
+        shortcut: { title: "Calls", url: "/dashboard/calls", icon: Phone, permission: "task:read" },
+      },
+      { id: "assistant", title: "AI Assistant", url: "/dashboard/assistant", icon: Sparkles, permission: "ai:use" },
     ],
   },
   {
     id: 2,
-    label: "Engage",
     items: [
-      { id: "sequences", title: "Sequences", url: "/dashboard/sequences", icon: Send, permission: "sequence:read" },
-      { id: "mailboxes", title: "Mailboxes", url: "/dashboard/mailboxes", icon: Inbox, permission: "mailbox:read" },
-      { id: "tasks", title: "Tasks", url: "/dashboard/tasks", icon: CheckSquare, permission: "task:read" },
-      { id: "deals", title: "Deals", url: "/dashboard/deals", icon: Handshake, permission: "deal:read" },
+      {
+        id: "prospect",
+        title: "Prospect and enrich",
+        icon: Search,
+        subItems: [
+          { id: "people", title: "People", url: "/dashboard/people", permission: "contact:read" },
+          { id: "companies", title: "Companies", url: "/dashboard/companies", permission: "company:read" },
+          { id: "lists", title: "Lists", url: "/dashboard/lists", permission: "list:read" },
+          { id: "enrichment", title: "Data enrichment", url: "/dashboard/enrichment", permission: "contact:read" },
+          { id: "research", title: "Research", url: "/dashboard/research", permission: "crawler:read" },
+        ],
+      },
+      {
+        id: "engage",
+        title: "Engage",
+        icon: Send,
+        subItems: [
+          { id: "sequences", title: "Sequences", url: "/dashboard/sequences", permission: "sequence:read" },
+          { id: "emails", title: "Emails", url: "/dashboard/emails", permission: "sequence:read" },
+          { id: "calls", title: "Calls", url: "/dashboard/calls", permission: "task:read" },
+          { id: "tasks", title: "Tasks", url: "/dashboard/tasks", permission: "task:read" },
+        ],
+      },
+      {
+        id: "win",
+        title: "Win deals",
+        icon: CircleDollarSign,
+        subItems: [
+          { id: "meetings", title: "Meetings", url: "/dashboard/meetings", permission: "contact:read" },
+          { id: "conversations", title: "Conversations", url: "/dashboard/conversations", permission: "contact:read" },
+          { id: "deals", title: "Deals", url: "/dashboard/deals", permission: "deal:read" },
+        ],
+      },
+      {
+        id: "tools",
+        title: "Tools and automation",
+        icon: Workflow,
+        subItems: [
+          { id: "workflows", title: "Workflows", url: "/dashboard/workflows", permission: "workflow:read" },
+          { id: "analytics", title: "Analytics", url: "/dashboard/analytics", permission: "analytics:read" },
+        ],
+      },
+      {
+        id: "inbound",
+        title: "Inbound",
+        icon: LogIn,
+        subItems: [
+          {
+            id: "website-visitors",
+            title: "Website visitors",
+            url: "/dashboard/website-visitors",
+            permission: "company:read",
+          },
+          { id: "forms", title: "Forms", url: "/dashboard/forms", permission: "contact:read" },
+        ],
+      },
+      {
+        id: "saved",
+        title: "Saved records",
+        icon: Bookmark,
+        subItems: [
+          { id: "saved-people", title: "People", url: "/dashboard/saved/people", permission: "contact:read" },
+          { id: "saved-companies", title: "Companies", url: "/dashboard/saved/companies", permission: "company:read" },
+        ],
+      },
     ],
   },
   {
     id: 3,
-    label: "Workspace",
-    items: [
-      {
-        id: "settings",
-        title: "Settings",
-        icon: Settings,
-        subItems: [
-          {
-            id: "members",
-            title: "Members",
-            url: "/dashboard/settings/members",
-            icon: UsersRound,
-            permission: "member:read",
-          },
-          {
-            id: "do-not-contact",
-            title: "Do not contact",
-            url: "/dashboard/settings/do-not-contact",
-            icon: ShieldBan,
-            permission: "suppression:read",
-          },
-          {
-            id: "api-keys",
-            title: "API keys",
-            url: "/dashboard/settings/api-keys",
-            icon: KeyRound,
-            permission: "apikey:read",
-          },
-          {
-            id: "branding",
-            title: "Branding",
-            url: "/dashboard/settings/branding",
-            icon: Palette,
-            permission: "branding:update",
-          },
-          {
-            id: "domains",
-            title: "Domains",
-            url: "/dashboard/settings/domains",
-            icon: Globe,
-            permission: "domain:read",
-          },
-          {
-            id: "audit-log",
-            title: "Audit log",
-            url: "/dashboard/settings/audit-log",
-            icon: ScrollText,
-            permission: "audit:read",
-          },
-        ],
-      },
-      { id: "platform", title: "Platform", url: "/dashboard/platform", icon: ServerCog, platformOnly: true },
-    ],
+    items: [{ id: "platform", title: "Platform", url: "/dashboard/platform", icon: ServerCog, platformOnly: true }],
   },
 ];
 
@@ -153,7 +169,10 @@ export function navFor(role: Role | null, isPlatformAdmin: boolean): NavGroup[] 
       items: group.items.flatMap((item): NavMainItem[] => {
         if (item.platformOnly && !isPlatformAdmin) return [];
         if (!allowed(item.permission)) return [];
-        if (!item.subItems) return [item];
+        if (!item.subItems) {
+          if (item.shortcut && !allowed(item.shortcut.permission)) return [{ ...item, shortcut: undefined }];
+          return [item];
+        }
         const subItems = item.subItems.filter((sub) => allowed(sub.permission));
         return subItems.length ? [{ ...item, subItems }] : [];
       }),

@@ -107,7 +107,7 @@ export function MembersManager({
     }
     toast.success(`${toRemove.name} was removed`);
     if (toRemove.id === currentUserId) {
-      router.replace("/dashboard/overview");
+      router.replace("/dashboard/home");
     }
     router.refresh();
     return true;

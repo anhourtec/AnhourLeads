@@ -15,7 +15,6 @@ const TEMPLATE_ROUTES = [
   "/dashboard/default",
   "/dashboard/crm",
   "/dashboard/finance",
-  "/dashboard/analytics",
   "/dashboard/ecommerce",
   "/dashboard/academy",
   "/dashboard/logistics",
@@ -52,10 +51,10 @@ export function proxy(req: NextRequest) {
   const hasSession = Boolean(getSessionCookie(req, { cookiePrefix: "anhour" }));
 
   if (pathname === "/") {
-    return NextResponse.redirect(new URL(hasSession ? "/dashboard/overview" : "/auth/login", req.url));
+    return NextResponse.redirect(new URL(hasSession ? "/dashboard/home" : "/auth/login", req.url));
   }
 
-  if (matches(pathname, "/dashboard") && !hasSession) {
+  if ((matches(pathname, "/dashboard") || matches(pathname, "/onboarding")) && !hasSession) {
     const login = new URL("/auth/login", req.url);
     login.searchParams.set("next", `${pathname}${search}`);
     return NextResponse.redirect(login);
