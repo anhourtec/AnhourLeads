@@ -239,7 +239,9 @@ export function CardColumn({
               <h2 id={`${bodyId}-title`} className="min-w-0 flex-1 truncate font-medium text-sm">
                 {CARD_TITLES[id]}
               </h2>
-              {card.action}
+              {/* Server-rendered actions arrive as lazy elements; a wrapper keeps them out of the header's
+                  child list so React doesn't ask them for a key. */}
+              {card.action ? <div className="flex shrink-0 items-center">{card.action}</div> : null}
               <Button
                 variant="ghost"
                 size="icon-sm"
