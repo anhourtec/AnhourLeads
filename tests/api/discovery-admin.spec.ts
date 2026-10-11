@@ -115,7 +115,8 @@ test.describe("platform discovery: behaviour", () => {
     const admin = await apiAs(PLATFORM_ADMIN);
     const list = await (await admin.get("/api/v1/platform/seed_sources")).json();
     const kinds = new Set(list.seed_sources.map((s: { kind: string }) => s.kind));
-    for (const k of ["wikidata", "sitemap", "ats_boards", "manual", "domain_list"]) expect(kinds.has(k), k).toBe(true);
+    for (const k of ["wikidata", "sitemap", "ats_boards", "manual", "domain_list", "companies_house", "sec_edgar"])
+      expect(kinds.has(k), k).toBe(true);
 
     const one = await (await admin.get(`/api/v1/platform/seed_sources/${sourceId}`)).json();
     expect(one.seed_source).toMatchObject({ kind: "domain_list", enabled: false, domainCount: 2 });

@@ -2,9 +2,10 @@
 
 import { useState, useSyncExternalStore } from "react";
 
-import { Play, Plus, Settings2 } from "lucide-react";
+import { KeyRound, Play, Plus, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -26,10 +27,12 @@ import type { SeedKind, SeedSourceView } from "@/server/discovery/seeds";
 import { Pill } from "./pill";
 import { exactTime, numberFormat, relativeTime } from "./tabs";
 
-const KIND_INFO: Record<SeedKind, { label: string; about: string }> = {
+const KIND_INFO: Record<SeedKind, { label: string; about: string; licence?: string; example?: string }> = {
   wikidata: {
     label: "Wikidata",
     about: "Businesses with an official website from Wikidata (CC0), queried politely in pages.",
+    licence: "CC0 1.0",
+    example: '{"countries": ["Q16"], "maxRows": 500}',
   },
   domain_list: { label: "Domain list", about: "Homepages from a list of domains you uploaded." },
   manual: { label: "Manual", about: "Domains added by hand." },
@@ -38,7 +41,33 @@ const KIND_INFO: Record<SeedKind, { label: string; about: string }> = {
     label: "Job boards",
     about: "Public job-board APIs (Greenhouse, Lever, Ashby, Workable) linked from careers pages.",
   },
+  companies_house: {
+    label: "Companies House",
+    about:
+      "UK companies and their current officers from the Companies House public data API. Websites come from Wikidata or an indexed company with the same name.",
+    licence: "Open Government Licence v3.0",
+    example: '{"maxCompanies": 200, "everyDays": 7, "sicCodes": ["62012"]}',
+  },
+  sec_edgar: {
+    label: "SEC EDGAR",
+    about:
+      "US listed companies and their officers and directors from SEC EDGAR filings (Forms 3 and 4). Websites come from Wikidata, the filing company or an indexed company with the same name.",
+    licence: "Public domain (US government work)",
+    example: '{"maxCompanies": 300, "everyDays": 7, "formLookbackDays": 730}',
+  },
 };
+
+const REQUIREMENT_INFO: Record<NonNullable<SeedSourceView["requirement"]>["envVar"], { title: string; hint: string }> =
+  {
+    COMPANIES_HOUSE_API_KEY: {
+      title: "API key missing",
+      hint: "a free key from the Companies House developer hub",
+    },
+    SEC_USER_AGENT: {
+      title: "User-Agent not set",
+      hint: 'a name and contact email, e.g. "AnhourLeads admin@example.com", as the SEC requires',
+    },
+  };
 
 const LIST_KINDS: SeedKind[] = ["domain_list", "manual"];
 
@@ -56,10 +85,26 @@ interface SourceResponse {
   seed_source: SeedSourceView;
 }
 
+const REGISTRY_KINDS: SeedKind[] = ["companies_house", "sec_edgar"];
+
+function registryLine(st: Record<string, unknown>): string {
+  const n = (k: string) => (typeof st[k] === "number" ? numberFormat.format(st[k] as number) : "0");
+  return [
+    `${n("companiesAdded")} companies added`,
+    `${n("companiesMatched")} matched`,
+    `${n("skippedNoWebsite")} skipped without a website`,
+    `${n("peopleAdded")} people added`,
+  ].join(" · ");
+}
+
 function statsLine(s: SeedSourceView): string | null {
   const st = s.stats;
   if (!st) return null;
   const n = (k: string) => (typeof st[k] === "number" ? numberFormat.format(st[k] as number) : "0");
+  if (REGISTRY_KINDS.includes(s.kind)) {
+    const errors = Array.isArray(st.errors) ? st.errors.length : 0;
+    return `${registryLine(st)}${errors ? ` · ${errors} error${errors === 1 ? "" : "s"}` : ""}`;
+  }
   const parts = [`${n("queued")} queued`, `${n("requeued")} re-queued`, `${n("skipped")} skipped`];
   if (s.kind === "wikidata") parts.unshift(`${n("companies")} companies`);
   const errors = Array.isArray(st.errors) ? st.errors.length : 0;
@@ -185,7 +230,7 @@ function SourceDialog({
                 name="config"
                 rows={6}
                 defaultValue={source ? editableConfig(source) : ""}
-                placeholder={(source?.kind ?? kind) === "wikidata" ? '{"countries": ["Q16"], "maxRows": 500}' : "{}"}
+                placeholder={KIND_INFO[source?.kind ?? kind].example ?? "{}"}
                 aria-invalid={Boolean(errors.config) || undefined}
                 className="font-mono text-xs"
               />
@@ -247,6 +292,18 @@ function SourceCard({ source, onChange }: { source: SeedSourceView; onChange: (s
   }
 
   const line = statsLine(source);
+  const info = KIND_INFO[source.kind];
+  const requirement = source.requirement ? REQUIREMENT_INFO[source.requirement.envVar] : null;
+  const totals =
+    REGISTRY_KINDS.includes(source.kind) && source.stats?.totals && typeof source.stats.totals === "object"
+      ? (source.stats.totals as Record<string, unknown>)
+      : null;
+  const firstError =
+    source.stats && Array.isArray(source.stats.errors) && typeof source.stats.errors[0] === "string"
+      ? source.stats.errors[0]
+      : null;
+  const cursor = typeof source.stats?.cursor === "number" ? source.stats.cursor : null;
+  const candidates = typeof source.stats?.candidates === "number" ? source.stats.candidates : null;
   return (
     <Card size="sm" data-testid="seed-source" data-kind={source.kind}>
       <CardHeader>
@@ -254,8 +311,12 @@ function SourceCard({ source, onChange }: { source: SeedSourceView; onChange: (s
           <span className="min-w-0 break-words">{source.name}</span>
           <Pill tone="neutral">{KIND_INFO[source.kind].label}</Pill>
           {source.enabled ? <Pill tone="positive">Enabled</Pill> : <Pill tone="neutral">Disabled</Pill>}
+          {requirement && <Pill tone="attention">{requirement.title}</Pill>}
         </CardTitle>
-        <CardDescription>{KIND_INFO[source.kind].about}</CardDescription>
+        <CardDescription>
+          {info.about}
+          {info.licence && <span className="mt-1 block text-xs">Licence: {info.licence}</span>}
+        </CardDescription>
         <CardAction>
           <div className="flex items-center gap-2">
             <label htmlFor={switchId} className="sr-only">
@@ -270,6 +331,18 @@ function SourceCard({ source, onChange }: { source: SeedSourceView; onChange: (s
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        {source.requirement && requirement && (
+          <Alert data-testid="source-requirement">
+            <KeyRound aria-hidden="true" />
+            <AlertTitle>{requirement.title}</AlertTitle>
+            <AlertDescription>
+              <p>
+                Set <code className="break-all font-mono text-xs">{source.requirement.envVar}</code> in the server
+                environment ({requirement.hint}), then restart the app and the scheduler.
+              </p>
+            </AlertDescription>
+          </Alert>
+        )}
         <p className="text-muted-foreground text-xs">
           <span title={exactTime(source.lastRunAt)} suppressHydrationWarning>
             Last run {relativeTime(source.lastRunAt).toLowerCase()}
@@ -277,8 +350,19 @@ function SourceCard({ source, onChange }: { source: SeedSourceView; onChange: (s
           {line ? ` · ${line}` : ""}
           {source.domainCount !== null ? ` · ${numberFormat.format(source.domainCount)} domains` : ""}
         </p>
+        {totals && (
+          <p className="text-muted-foreground text-xs" data-testid="source-totals">
+            All runs: {registryLine(totals)}
+            {cursor !== null && candidates
+              ? ` · next run starts at ${numberFormat.format(cursor)} of ${numberFormat.format(candidates)}`
+              : ""}
+          </p>
+        )}
+        {firstError && REGISTRY_KINDS.includes(source.kind) && !source.requirement && (
+          <p className="break-words text-destructive text-xs">{firstError}</p>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={run} disabled={running}>
+          <Button size="sm" variant="outline" onClick={run} disabled={running || Boolean(source.requirement)}>
             <Play data-icon="inline-start" aria-hidden="true" />
             {running ? "Running…" : "Run now"}
           </Button>
