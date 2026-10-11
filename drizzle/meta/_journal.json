@@ -15,6 +15,13 @@
       "when": 1791662800536,
       "tag": "0001_mailbox_smtp_outbound",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791680322943,
+      "tag": "0002_apollo_parity",
+      "breakpoints": true
     }
   ]
 }

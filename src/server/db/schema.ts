@@ -271,6 +271,9 @@ export const company = pgTable(
       .default("cold"),
     source: text("source").notNull().default("manual"),
     lastEnrichedAt: timestamp("last_enriched_at", { withTimezone: true }),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    /** Values of workspace custom fields (custom_field.key → value). */
+    customFields: jsonb("custom_fields").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -319,7 +322,18 @@ export const contact = pgTable(
     timezone: text("timezone"),
     ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
     stage: text("stage", {
-      enum: ["new", "contacted", "replied", "interested", "not_interested", "unresponsive", "do_not_contact"],
+      // Labels (settings → contact stages): new = Cold, contacted = Approaching.
+      enum: [
+        "new",
+        "contacted",
+        "replied",
+        "interested",
+        "not_interested",
+        "unresponsive",
+        "do_not_contact",
+        "bad_data",
+        "changed_job",
+      ],
     })
       .notNull()
       .default("new"),
@@ -327,6 +341,9 @@ export const contact = pgTable(
     /** Lawful basis for contacting this person, e.g. "legitimate_interest" (GDPR) or "implied_consent" (CASL). */
     consentBasis: text("consent_basis"),
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    personaId: text("persona_id"),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    customFields: jsonb("custom_fields").$type<Record<string, unknown>>().notNull().default({}),
     lastEnrichedAt: timestamp("last_enriched_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -421,6 +438,10 @@ export const mailbox = pgTable(
     smtpPasswordEnc: text("smtp_password_enc"),
     /** Sender identification required in every message (CAN-SPAM / CASL). */
     postalAddress: text("postal_address"),
+    /** HTML-free signature appended to every send (required when the workspace policy says so). */
+    signature: text("signature"),
+    /** Ramp-up start for gradual sending increase. */
+    warmupStartedAt: timestamp("warmup_started_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -443,6 +464,17 @@ export const sequence = pgTable(
     reviewMode: text("review_mode", { enum: ["all", "first_step", "none"] })
       .notNull()
       .default("all"),
+    description: text("description"),
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
+    starred: boolean("starred").notNull().default(false),
+    scheduleId: text("schedule_id"),
+    cc: text("cc"),
+    bcc: text("bcc"),
+    /** Max emails this sequence sends per rolling 24 hours (null = mailbox limits only). */
+    maxPer24h: integer("max_per_24h"),
+    /** Ruleset: triggers, contact/email triggers (docs/reference/apollo-ui.md §7). */
+    ruleset: jsonb("ruleset").$type<Record<string, unknown>>().notNull().default({}),
     createdById: text("created_by_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -458,8 +490,25 @@ export const sequenceStep = pgTable(
       .notNull()
       .references(() => sequence.id, { onDelete: "cascade" }),
     position: integer("position").notNull(),
-    type: text("type", { enum: ["auto_email", "manual_email", "call", "task"] }).notNull(),
+    type: text("type", {
+      enum: [
+        "auto_email",
+        "manual_email",
+        "call",
+        "task",
+        "linkedin_connect",
+        "linkedin_message",
+        "linkedin_view",
+        "linkedin_interact",
+      ],
+    }).notNull(),
     waitDays: integer("wait_days").notNull().default(0),
+    /** Extra wait in minutes on top of waitDays (e.g. "send in 30 minutes"). */
+    waitMinutes: integer("wait_minutes").notNull().default(0),
+    enabled: boolean("enabled").notNull().default(true),
+    threadMode: text("thread_mode", { enum: ["new_thread", "reply"] })
+      .notNull()
+      .default("new_thread"),
     subject: text("subject"),
     body: text("body"),
     createdAt: createdAt(),
@@ -501,6 +550,7 @@ export const outboundMessage = pgTable(
     contactId: text("contact_id").references(() => contact.id, { onDelete: "set null" }),
     enrollmentId: text("enrollment_id").references(() => enrollment.id, { onDelete: "set null" }),
     stepId: text("step_id").references(() => sequenceStep.id, { onDelete: "set null" }),
+    variantId: text("variant_id"),
     toEmail: text("to_email").notNull(),
     subject: text("subject").notNull(),
     body: text("body").notNull(),
@@ -530,7 +580,20 @@ export const task = pgTable(
     assigneeId: text("assignee_id").references(() => user.id, { onDelete: "set null" }),
     contactId: text("contact_id").references(() => contact.id, { onDelete: "set null" }),
     companyId: text("company_id").references(() => company.id, { onDelete: "set null" }),
-    type: text("type", { enum: ["call", "email", "linkedin", "action_item"] })
+    dealId: text("deal_id"),
+    enrollmentId: text("enrollment_id"),
+    type: text("type", {
+      enum: [
+        "call",
+        "email",
+        "linkedin",
+        "action_item",
+        "linkedin_connect",
+        "linkedin_message",
+        "linkedin_view",
+        "linkedin_interact",
+      ],
+    })
       .notNull()
       .default("action_item"),
     priority: text("priority", { enum: ["low", "medium", "high"] })
@@ -562,6 +625,10 @@ export const deal = pgTable(
     contactId: text("contact_id").references(() => contact.id, { onDelete: "set null" }),
     ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
     stage: text("stage", { enum: DEAL_STAGES }).notNull().default("qualify"),
+    /** Configurable pipelines (pipeline / pipeline_stage). When set, stageId is authoritative. */
+    pipelineId: text("pipeline_id"),
+    stageId: text("stage_id"),
+    customFields: jsonb("custom_fields").$type<Record<string, unknown>>().notNull().default({}),
     amount: integer("amount"),
     currency: text("currency").notNull().default("USD"),
     closeDate: timestamp("close_date", { withTimezone: true }),
@@ -611,4 +678,467 @@ export const crawlPage = pgTable(
     fetchedAt: createdAt(),
   },
   (t) => [index("crawl_page_job_idx").on(t.jobId)],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Apollo-parity additions (docs/reference/apollo-ui.md)                      */
+/* -------------------------------------------------------------------------- */
+
+/** Saved searches (people / companies), with starring, sharing and assignment. */
+export const savedSearch = pgTable(
+  "saved_search",
+  {
+    id: id(),
+    organizationId: orgId(),
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
+    assignedToId: text("assigned_to_id").references(() => user.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    entityType: text("entity_type", { enum: ["contact", "company"] }).notNull(),
+    filters: jsonb("filters").$type<Record<string, unknown>>().notNull().default({}),
+    columns: text("columns").array(),
+    sort: jsonb("sort").$type<{ field: string; ascending: boolean } | null>(),
+    starred: boolean("starred").notNull().default(false),
+    shared: boolean("shared").notNull().default(false),
+    /** Notify the owner when new records match. */
+    alertsEnabled: boolean("alerts_enabled").notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("saved_search_org_idx").on(t.organizationId)],
+);
+
+/** Saved views for other tables (tasks, emails, deals). */
+export const savedView = pgTable(
+  "saved_view",
+  {
+    id: id(),
+    organizationId: orgId(),
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
+    scope: text("scope", { enum: ["tasks", "emails", "deals", "lists"] }).notNull(),
+    name: text("name").notNull(),
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+    starred: boolean("starred").notNull().default(false),
+    shared: boolean("shared").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [index("saved_view_org_idx").on(t.organizationId, t.scope)],
+);
+
+export const note = pgTable(
+  "note",
+  {
+    id: id(),
+    organizationId: orgId(),
+    entityType: text("entity_type", { enum: ["contact", "company", "deal"] }).notNull(),
+    entityId: text("entity_id").notNull(),
+    body: text("body").notNull(),
+    authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("note_entity_idx").on(t.entityType, t.entityId)],
+);
+
+/** Timeline of everything that happened to a record (emails, stage changes, notes, tasks, calls…). */
+export const activity = pgTable(
+  "activity",
+  {
+    id: id(),
+    organizationId: orgId(),
+    contactId: text("contact_id"),
+    companyId: text("company_id"),
+    dealId: text("deal_id"),
+    type: text("type").notNull(),
+    summary: text("summary").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    actorUserId: text("actor_user_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("activity_contact_idx").on(t.contactId, t.occurredAt),
+    index("activity_company_idx").on(t.companyId, t.occurredAt),
+    index("activity_org_idx").on(t.organizationId, t.occurredAt),
+  ],
+);
+
+export const customField = pgTable(
+  "custom_field",
+  {
+    id: id(),
+    organizationId: orgId(),
+    entityType: text("entity_type", { enum: ["contact", "company", "deal"] }).notNull(),
+    key: text("key").notNull(),
+    label: text("label").notNull(),
+    type: text("type", { enum: ["text", "number", "date", "boolean", "picklist", "url"] }).notNull(),
+    options: text("options").array(),
+    position: integer("position").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("custom_field_org_key_idx").on(t.organizationId, t.entityType, t.key)],
+);
+
+export const persona = pgTable(
+  "persona",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    titles: text("titles").array().notNull().default(sql`'{}'::text[]`),
+    seniorities: text("seniorities").array().notNull().default(sql`'{}'::text[]`),
+    departments: text("departments").array().notNull().default(sql`'{}'::text[]`),
+    createdAt: createdAt(),
+  },
+  (t) => [index("persona_org_idx").on(t.organizationId)],
+);
+
+/** Stage display names and protection per workspace (contact / account stages). */
+export const recordStage = pgTable(
+  "record_stage",
+  {
+    id: id(),
+    organizationId: orgId(),
+    entityType: text("entity_type", { enum: ["contact", "company"] }).notNull(),
+    key: text("key").notNull(),
+    label: text("label").notNull(),
+    position: integer("position").notNull().default(0),
+    /** Don't override with event triggers when set manually. */
+    protected: boolean("protected").notNull().default(false),
+  },
+  (t) => [uniqueIndex("record_stage_org_key_idx").on(t.organizationId, t.entityType, t.key)],
+);
+
+/** Event → contact stage rules (settings → contact stages → triggers). */
+export const stageTrigger = pgTable(
+  "stage_trigger",
+  {
+    id: id(),
+    organizationId: orgId(),
+    event: text("event", {
+      enum: [
+        "prospect_created",
+        "email_delivered",
+        "email_bounced",
+        "spam_blocked",
+        "unsubscribed",
+        "replied",
+        "interested",
+        "unresponsive",
+      ],
+    }).notNull(),
+    stageKey: text("stage_key"),
+  },
+  (t) => [uniqueIndex("stage_trigger_org_event_idx").on(t.organizationId, t.event)],
+);
+
+export const pipeline = pgTable(
+  "pipeline",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [index("pipeline_org_idx").on(t.organizationId)],
+);
+
+export const pipelineStage = pgTable(
+  "pipeline_stage",
+  {
+    id: id(),
+    pipelineId: text("pipeline_id")
+      .notNull()
+      .references(() => pipeline.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    position: integer("position").notNull(),
+    type: text("type", { enum: ["open", "won", "lost"] })
+      .notNull()
+      .default("open"),
+    probability: integer("probability"),
+  },
+  (t) => [index("pipeline_stage_pipeline_idx").on(t.pipelineId)],
+);
+
+/** Reusable sending schedules: time zone + weekly windows. */
+export const sendingSchedule = pgTable(
+  "sending_schedule",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    timezone: text("timezone").notNull().default("UTC"),
+    /** { mon: [["08:00","17:00"]], tue: [...], ... } */
+    windows: jsonb("windows").$type<Record<string, [string, string][]>>().notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [index("schedule_org_idx").on(t.organizationId)],
+);
+
+/** A/B variants of an email step. Steps without variants use sequence_step.subject/body. */
+export const stepVariant = pgTable(
+  "step_variant",
+  {
+    id: id(),
+    stepId: text("step_id")
+      .notNull()
+      .references(() => sequenceStep.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    subject: text("subject"),
+    body: text("body"),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [index("variant_step_idx").on(t.stepId)],
+);
+
+export const emailTemplate = pgTable(
+  "email_template",
+  {
+    id: id(),
+    organizationId: orgId(),
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    shared: boolean("shared").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("template_org_idx").on(t.organizationId)],
+);
+
+export const snippet = pgTable(
+  "snippet",
+  {
+    id: id(),
+    organizationId: orgId(),
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    body: text("body").notNull(),
+    shared: boolean("shared").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [index("snippet_org_idx").on(t.organizationId)],
+);
+
+export const workflow = pgTable(
+  "workflow",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    status: text("status", { enum: ["draft", "active", "paused", "archived"] })
+      .notNull()
+      .default("draft"),
+    targetType: text("target_type", { enum: ["contact", "company", "deal"] })
+      .notNull()
+      .default("contact"),
+    triggerType: text("trigger_type", { enum: ["event", "schedule"] })
+      .notNull()
+      .default("event"),
+    triggerEvent: text("trigger_event"),
+    /** For schedule triggers: { at?: ISO date, weekly?: { days: string[], time: "HH:MM" }, timezone } */
+    schedule: jsonb("schedule").$type<Record<string, unknown>>(),
+    enrollmentFilters: jsonb("enrollment_filters").$type<Record<string, unknown>>().notNull().default({}),
+    /** Ordered block tree: rules (branch, split, delay, exit) and actions. */
+    blocks: jsonb("blocks").$type<unknown[]>().notNull().default([]),
+    createdById: text("created_by_id"),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("workflow_org_idx").on(t.organizationId)],
+);
+
+export const workflowRun = pgTable(
+  "workflow_run",
+  {
+    id: id(),
+    organizationId: orgId(),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => workflow.id, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    status: text("status", { enum: ["running", "waiting", "completed", "failed", "exited"] })
+      .notNull()
+      .default("running"),
+    /** Position in the block tree, and when a delay ends. */
+    cursor: jsonb("cursor").$type<Record<string, unknown>>(),
+    resumeAt: timestamp("resume_at", { withTimezone: true }),
+    log: jsonb("log").$type<unknown[]>().notNull().default([]),
+    startedAt: createdAt(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("workflow_run_wf_idx").on(t.workflowId), index("workflow_run_resume_idx").on(t.status, t.resumeAt)],
+);
+
+export const notification = pgTable(
+  "notification",
+  {
+    id: id(),
+    organizationId: orgId(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    link: text("link"),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("notification_user_idx").on(t.userId, t.createdAt)],
+);
+
+/** Per user and workspace: onboarding answers, checklist progress, consents. */
+export const onboardingState = pgTable(
+  "onboarding_state",
+  {
+    id: id(),
+    organizationId: orgId(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role"),
+    teamSize: text("team_size"),
+    goals: text("goals").array().notNull().default(sql`'{}'::text[]`),
+    completedSteps: text("completed_steps").array().notNull().default(sql`'{}'::text[]`),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    hubDismissedAt: timestamp("hub_dismissed_at", { withTimezone: true }),
+    /** Anti-spam acknowledgement (before connecting a mailbox / creating the first sequence). */
+    antiSpamAcceptedAt: timestamp("anti_spam_accepted_at", { withTimezone: true }),
+    homeLayout: text("home_layout").notNull().default("getting_started"),
+  },
+  (t) => [uniqueIndex("onboarding_org_user_idx").on(t.organizationId, t.userId)],
+);
+
+/** Sending protection policies per workspace (settings → email setup and health). */
+export const sendingPolicy = pgTable("sending_policy", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  autoPauseOnAuthIssue: boolean("auto_pause_on_auth_issue").notNull().default(false),
+  restrictUnverified: boolean("restrict_unverified").notNull().default(false),
+  restrictCatchAll: boolean("restrict_catch_all").notNull().default(true),
+  requireSignature: boolean("require_signature").notNull().default(false),
+  gradualRamp: boolean("gradual_ramp").notNull().default(false),
+  bounceGuard: boolean("bounce_guard").notNull().default(true),
+  /** Fraction (0.05 = 5%) of bounces over the last 100 sends that pauses a sequence. */
+  bounceThreshold: real("bounce_threshold").notNull().default(0.05),
+  workspaceDailyLimit: integer("workspace_daily_limit"),
+  updatedAt: updatedAt(),
+});
+
+/** DNS health of a sending domain (SPF, DKIM, DMARC, MX, tracking CNAME). */
+export const sendingDomain = pgTable(
+  "sending_domain",
+  {
+    id: id(),
+    organizationId: orgId(),
+    domain: text("domain").notNull(),
+    spf: text("spf", { enum: ["pass", "fail", "missing", "unknown"] })
+      .notNull()
+      .default("unknown"),
+    dkim: text("dkim", { enum: ["pass", "fail", "missing", "unknown"] })
+      .notNull()
+      .default("unknown"),
+    dmarc: text("dmarc", { enum: ["pass", "fail", "missing", "unknown"] })
+      .notNull()
+      .default("unknown"),
+    mx: text("mx", { enum: ["pass", "fail", "missing", "unknown"] })
+      .notNull()
+      .default("unknown"),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("sending_domain_org_idx").on(t.organizationId, t.domain)],
+);
+
+/** Bulk enrichment jobs (CSV upload, list, selected records). */
+export const enrichmentJob = pgTable(
+  "enrichment_job",
+  {
+    id: id(),
+    organizationId: orgId(),
+    kind: text("kind", { enum: ["csv", "list", "records"] }).notNull(),
+    status: text("status", { enum: ["queued", "running", "completed", "failed"] })
+      .notNull()
+      .default("queued"),
+    fileName: text("file_name"),
+    total: integer("total").notNull().default(0),
+    processed: integer("processed").notNull().default(0),
+    enriched: integer("enriched").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    options: jsonb("options").$type<Record<string, unknown>>(),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    createdById: text("created_by_id"),
+    createdAt: createdAt(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("enrichment_job_org_idx").on(t.organizationId)],
+);
+
+/** Analytics dashboards (system or custom) made of widgets. */
+export const dashboard = pgTable(
+  "dashboard",
+  {
+    id: id(),
+    organizationId: orgId(),
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ["system", "custom", "home"] })
+      .notNull()
+      .default("custom"),
+    widgets: jsonb("widgets").$type<unknown[]>().notNull().default([]),
+    starred: boolean("starred").notNull().default(false),
+    shared: boolean("shared").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("dashboard_org_idx").on(t.organizationId)],
+);
+
+/** AI context center: what the workspace sells and to whom (grounds AI drafts). */
+export const aiContext = pgTable("ai_context", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  companyDescription: text("company_description"),
+  valueProposition: text("value_proposition"),
+  targetCustomers: text("target_customers"),
+  tone: text("tone"),
+  updatedAt: updatedAt(),
+});
+
+export const aiChat = pgTable(
+  "ai_chat",
+  {
+    id: id(),
+    organizationId: orgId(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("ai_chat_user_idx").on(t.organizationId, t.userId)],
+);
+
+export const aiMessage = pgTable(
+  "ai_message",
+  {
+    id: id(),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => aiChat.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["user", "assistant", "tool"] }).notNull(),
+    content: text("content").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_message_chat_idx").on(t.chatId, t.createdAt)],
 );
