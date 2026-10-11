@@ -3,7 +3,6 @@ import "server-only";
 import { cache } from "react";
 
 import { headers } from "next/headers";
-import { notFound, redirect } from "next/navigation";
 
 import { asc, eq } from "drizzle-orm";
 
@@ -14,6 +13,12 @@ import { workspaceBrand } from "@/server/tenancy/brand";
 import { requestHost, resolveTenant, type Tenant } from "@/server/tenancy/host";
 
 import { getAuth } from "./auth";
+
+/**
+ * `next/navigation` is loaded on first use: its client half breaks plain Node processes (the
+ * scheduler and crawler run with --conditions=react-server) that only need this module's types.
+ */
+export const navigation = () => import("next/navigation");
 
 export interface Membership {
   organizationId: string;
@@ -33,7 +38,7 @@ export interface AppContext {
 /** Tenant and brand for a page, signed in or not. Unknown hostnames render the not-found page. */
 export const getTenantBrand = cache(async (): Promise<{ tenant: Tenant; brand: Brand }> => {
   const tenant = await resolveTenant(requestHost(await headers()));
-  if (!tenant) notFound();
+  if (!tenant) return (await navigation()).notFound();
   const brand = tenant.kind === "workspace" ? await workspaceBrand(tenant.organizationId) : DEFAULT_BRAND;
   return { tenant, brand };
 });
@@ -43,7 +48,7 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
   const { tenant, brand: hostBrand } = await getTenantBrand();
   const requestHeaders = await headers();
   const session = await getAuth(tenant).api.getSession({ headers: requestHeaders });
-  if (!session) redirect("/auth/login");
+  if (!session) return (await navigation()).redirect("/auth/login");
 
   const rows = await db
     .select({
