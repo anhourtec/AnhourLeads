@@ -61,8 +61,8 @@ test.describe("mailboxes screen", () => {
         expect((await page.goto("/dashboard/mailboxes"))?.status()).toBe(200);
         await expect(page.getByRole("heading", { level: 1, name: "Mailboxes" })).toBeVisible();
         await expect(page.getByText("member@acme.test").first()).toBeVisible();
-        // The seeded mailbox has no SMTP settings or postal address: the hints say so.
-        await expect(page.getByText(/Add a postal address/).first()).toBeVisible();
+        // The seeded mailbox sends through local Mailpit and carries the sender's postal address.
+        await expect(page.getByText("Acme Outbound, 100 King St W, Toronto, ON M5X 1A9, Canada").first()).toBeVisible();
         for (const name of ["Add mailbox", "Edit", "Test connection", "Remove"]) {
           await expect(page.getByRole("button", { name })).toHaveCount(0);
         }

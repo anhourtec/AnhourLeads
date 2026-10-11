@@ -1,7 +1,7 @@
 import { expect as baseExpect, test } from "@playwright/test";
 
 import { can, type Permission, ROLES } from "../../src/lib/rbac/permissions";
-import { ACME } from "../support/session";
+import { ACME, apiAs } from "../support/session";
 import { expectNoHorizontalOverflow, openAs, shot, uid } from "./admin-ui";
 
 test.describe.configure({ timeout: 90_000 });
@@ -131,6 +131,10 @@ test.describe("settings screens", () => {
       await page.keyboard.press("Escape");
       await page.screenshot({ path: shot("members", info.project.name), fullPage: true });
 
+      // Make sure there's a task entry to filter to, whatever ran before this test.
+      const owner = await apiAs(ACME.owner);
+      const created = await owner.post("/api/v1/tasks", { data: { title: `Audit check ${uid()}`, type: "call" } });
+      expect(created.status(), await created.text()).toBe(201);
       await page.goto("/dashboard/settings/audit-log?action=task.");
       await expect(page.getByRole("list", { name: "Audit entries" })).toBeVisible();
       await expect(page.getByLabel("Area")).toHaveValue("task.");
