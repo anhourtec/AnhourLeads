@@ -49,9 +49,11 @@ test.describe("find companies (Apollo parity)", () => {
     const [small, mid, large] = await seed(tag);
     const { context, page, errors } = await openAs(browser, ACME.member);
     try {
-      expect((await page.goto(`/dashboard/companies?company=${encodeURIComponent(`Coparity ${tag}`)}`))?.status()).toBe(
-        200,
-      );
+      expect(
+        (
+          await page.goto(`/dashboard/companies?company=${encodeURIComponent(`Coparity ${tag}`)}&segment=saved`)
+        )?.status(),
+      ).toBe(200);
       await expect(page.getByRole("heading", { level: 1, name: "Find companies" })).toBeVisible();
       await expect(page.getByRole("columnheader", { name: "Number of employees" })).toBeVisible();
       for (const c of [small, mid, large])
@@ -98,7 +100,7 @@ test.describe("find companies (Apollo parity)", () => {
     await seed(tag);
     const { context, page, errors } = await openAs(browser, ACME.member);
     try {
-      await page.goto(`/dashboard/companies?company=${encodeURIComponent(`Coparity ${tag}`)}`);
+      await page.goto(`/dashboard/companies?company=${encodeURIComponent(`Coparity ${tag}`)}&segment=saved`);
       await page.waitForLoadState("networkidle");
       await page.getByRole("checkbox", { name: "Select all companies on this page" }).click();
       const bulk = page.getByRole("toolbar", { name: "Bulk actions" });
@@ -125,7 +127,7 @@ test.describe("find companies (Apollo parity)", () => {
     const [small] = await seed(tag);
     const { context, page, errors } = await openAs(browser, ACME.viewer);
     try {
-      await page.goto(`/dashboard/companies?company=${encodeURIComponent(`Coparity ${tag}`)}`);
+      await page.goto(`/dashboard/companies?company=${encodeURIComponent(`Coparity ${tag}`)}&segment=saved`);
       await page.waitForLoadState("networkidle");
       await expect(page.getByRole("link", { name: small.name, exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: `Save ${small.name}` })).toHaveCount(0);

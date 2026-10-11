@@ -29,12 +29,16 @@ export function SortPopover({
   sortBy,
   ascending,
   onApply,
+  fields: fieldsProp,
 }: {
   entity: SearchEntity;
   sortBy: string;
   ascending: boolean;
   onApply: (sortBy: string | null, ascending: boolean) => void;
+  /** Sort fields to offer (defaults to the workspace fields for the entity). */
+  fields?: { value: string; label: string }[];
 }) {
+  const fields = fieldsProp ?? SORT_FIELDS[entity];
   const id = useId();
   const [open, setOpen] = useState(false);
   const [field, setField] = useState(sortBy);
@@ -45,7 +49,7 @@ export function SortPopover({
       setAsc(ascending);
     }
   }, [open, sortBy, ascending]);
-  const label = SORT_FIELDS[entity].find((f) => f.value === sortBy)?.label ?? "Relevance";
+  const label = fields.find((f) => f.value === sortBy)?.label ?? "Relevance";
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -60,7 +64,7 @@ export function SortPopover({
           <Label htmlFor={`${id}-field`}>Sort by</Label>
           <NativeSelect id={`${id}-field`} size="sm" value={field} onChange={(e) => setField(e.target.value)}>
             <NativeSelectOption value="">Relevance (newest first)</NativeSelectOption>
-            {SORT_FIELDS[entity].map((f) => (
+            {fields.map((f) => (
               <NativeSelectOption key={f.value} value={f.value}>
                 {f.label}
               </NativeSelectOption>

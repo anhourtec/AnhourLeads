@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useRouter } from "next/navigation";
 
-import { SearchX, SlidersHorizontal } from "lucide-react";
+import { SearchX, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,15 @@ import {
   PER_PAGE_OPTIONS,
   type Segment,
 } from "@/lib/search/filters";
+import {
+  INDEX_FILTER_IDS,
+  INDEX_SORT_FIELDS,
+  indexBodyFromFilters,
+  isCustomFieldKey,
+  unsupportedIndexKeys,
+} from "@/lib/search/index-filters";
+import type { IndexPersonView } from "@/server/services/discovery";
+import type { IndexPageData } from "@/server/services/search-page";
 
 import { AddToListDialog } from "../actions/add-to-list-dialog";
 import { AddToSequenceDialog } from "../actions/add-to-sequence-dialog";
@@ -28,10 +37,14 @@ import { SearchBox } from "../search-box";
 import { BulkBar } from "./bulk-bar";
 import { CompanyDrawer } from "./company-drawer";
 import { NaturalLanguageBox, QuickFilters } from "./empty-state";
-import { DEFAULT_PINS } from "./filter-catalog";
+import { DEFAULT_PINS, type FilterDef, filtersFor } from "./filter-catalog";
 import type { EditorContext, FilterPatch } from "./filter-editors";
 import { FilterRail } from "./filter-rail";
 import { FiltersModal } from "./filters-modal";
+import { useIndexActions } from "./index-actions";
+import { IgnoredFiltersNotice, IndexBulkBar, IndexEmptyState } from "./index-panels";
+import { IndexCompaniesTable, IndexPeopleTable } from "./index-results";
+import { IndexCompanySheet, IndexPersonSheet } from "./index-sheets";
 import { columnsFor, defaultColumns, ResultsTable, type Row, type SelectMode } from "./results-table";
 import { SavedSearchMenu, SaveSearchDialog } from "./saved-search-menu";
 import { SearchPagination } from "./search-pagination";
@@ -72,6 +85,31 @@ export interface SearchShellProps {
   breadcrumb?: React.ReactNode;
   /** Static list being viewed: adds "Remove from list" to the bulk bar. */
   staticListId?: string;
+  /**
+   * Find people / Find companies: Total and Net new search the shared discovery index, Saved shows
+   * the workspace's own records. `segment` is the tab the server rendered (its default when the URL
+   * has none).
+   */
+  segment?: Segment;
+  index?: IndexPageData;
+}
+
+const UNAVAILABLE_HINT = "Saved records only";
+
+/** The tab a saved search was saved on (Total when it didn't record one). */
+function savedSegment(value: unknown): Segment | null {
+  return value === "net_new" || value === "saved" ? value : null;
+}
+
+/** Labels for active filters the shared index can't apply. */
+function ignoredLabels(entity: "contact" | "company", filters: FilterState): string[] {
+  const defs = filtersFor(entity);
+  const labels = unsupportedIndexKeys(entity, filters).map((key) => {
+    if (isCustomFieldKey(key)) return "Custom fields";
+    if (key === "companyId") return "Company (saved record)";
+    return defs.find((d) => d.keys.includes(key))?.label ?? key;
+  });
+  return [...new Set(labels)];
 }
 
 function download(blob: Blob, name: string) {
@@ -117,7 +155,14 @@ export function SearchShell(props: SearchShellProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
 
-  const segment: Segment = ctx.fixedSegment ?? ((view.segment as Segment) || "total");
+  const findMode = Boolean(props.index);
+  const segment: Segment = ctx.fixedSegment ?? ((view.segment as Segment) || props.segment || "total");
+  /** Total / Net new on Find people / Find companies: rows come from the shared index. */
+  const indexMode = findMode && segment !== "saved";
+  const index = props.index;
+  const indexActions = useIndexActions();
+  const [indexPerson, setIndexPerson] = useState<IndexPersonView | null>(null);
+  const [indexCompanyId, setIndexCompanyId] = useState<string | null>(null);
   const filterCount = activeFilterCount(filters);
   const hasQuery = Boolean(filters.q);
   const showResults =
@@ -167,14 +212,24 @@ export function SearchShell(props: SearchShellProps) {
       options,
       permissions,
       onCreatePersona: permissions.personaManage ? (initial) => setPersonaDraft(initial) : undefined,
+      unavailable: indexMode
+        ? (def: FilterDef) => (INDEX_FILTER_IDS[entity].has(def.id) ? null : UNAVAILABLE_HINT)
+        : undefined,
     }),
-    [entity, facets, options, permissions],
+    [entity, facets, options, permissions, indexMode],
   );
 
+  // On Find pages "Saved" is every workspace record, so the workspace query carries no segment.
   const fixedBody = useMemo(
-    () => ({ ...ctx.fixed, ...(segment !== "total" ? { segment } : {}) }),
-    [ctx.fixed, segment],
+    () => ({ ...ctx.fixed, ...(segment !== "total" && !findMode ? { segment } : {}) }),
+    [ctx.fixed, segment, findMode],
   );
+  const indexCountBody = useCallback(
+    (draft: FilterState) => ({ ...indexBodyFromFilters(entity, draft), segment }),
+    [entity, segment],
+  );
+  const showSaved = () => setView({ segment: "saved" });
+  const ignored = indexMode ? ignoredLabels(entity, filters) : [];
   const searchBody = useCallback(() => ({ ...filters, ...fixedBody }), [filters, fixedBody]);
 
   const selectedIds = [...selected];
@@ -299,12 +354,14 @@ export function SearchShell(props: SearchShellProps) {
   );
 
   const selecting = selected.size > 0;
-  const selectable =
-    permissions.update ||
-    permissions.delete ||
-    permissions.listUpdate ||
-    permissions.export ||
-    permissions.sequenceLaunch;
+  const selectable = indexMode
+    ? index?.permissions.save === true || (entity === "contact" && index?.permissions.accessEmail === true)
+    : permissions.update ||
+      permissions.delete ||
+      permissions.listUpdate ||
+      permissions.export ||
+      permissions.sequenceLaunch;
+  const indexRowCount = entity === "contact" ? (index?.people.length ?? 0) : (index?.companies.length ?? 0);
 
   let results: React.ReactNode;
   if (!showResults) {
@@ -320,11 +377,75 @@ export function SearchShell(props: SearchShellProps) {
         />
         <QuickFilters entity={entity} data={props.quick} onApply={applyPatch} />
         <div className="flex justify-center">
-          <Button type="button" variant="outline" size="sm" onClick={() => setView({ segment: "total" })}>
-            Show all {counts.total.toLocaleString("en-US")} {noun}
+          <Button type="button" variant="outline" size="sm" onClick={() => setView({ segment })}>
+            Show all {counts[segment].toLocaleString("en-US")} {noun}
           </Button>
         </div>
       </div>
+    );
+  } else if (indexMode && index) {
+    let body: React.ReactNode;
+    if (index.empty) {
+      body = <IndexEmptyState entity={entity} isPlatformAdmin={index.isPlatformAdmin} onShowSaved={showSaved} />;
+    } else if (!indexRowCount) {
+      body = (
+        <Empty className="m-4 border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SearchX aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>
+              {filterCount || hasQuery
+                ? `No ${segment === "net_new" ? "net new " : ""}${noun} match these filters`
+                : `No ${segment === "net_new" ? "net new " : ""}${noun} found`}
+            </EmptyTitle>
+            <EmptyDescription>
+              {segment === "net_new"
+                ? `Everything that matches is already saved in this workspace, or try fewer filters.`
+                : "Try fewer filters or a shorter search."}
+            </EmptyDescription>
+          </EmptyHeader>
+          {filterCount || hasQuery ? (
+            <EmptyContent>
+              <Button variant="outline" size="sm" onClick={clearAll}>
+                <X data-icon="inline-start" aria-hidden="true" />
+                Clear filters
+              </Button>
+            </EmptyContent>
+          ) : null}
+        </Empty>
+      );
+    } else {
+      const tableProps = {
+        selected,
+        onSelectedChange: (next: Set<string>) => setSelected(next),
+        selectable,
+        density,
+        pending,
+        actions: indexActions,
+        permissions: index.permissions,
+      };
+      body = (
+        <>
+          {entity === "contact" ? (
+            <IndexPeopleTable
+              rows={index.people}
+              {...tableProps}
+              onOpenPerson={setIndexPerson}
+              onOpenCompany={setIndexCompanyId}
+            />
+          ) : (
+            <IndexCompaniesTable rows={index.companies} {...tableProps} onOpenCompany={setIndexCompanyId} />
+          )}
+          <SearchPagination pagination={pagination} noun={noun} onPage={(p) => setView({ page: String(p) }, true)} />
+        </>
+      );
+    }
+    results = (
+      <>
+        <IgnoredFiltersNotice labels={ignored} onShowSaved={showSaved} />
+        {body}
+      </>
     );
   } else if (!rows.length) {
     results =
@@ -422,6 +543,7 @@ export function SearchShell(props: SearchShellProps) {
             onSelect={(s) =>
               replaceFilters(filtersFromObject(s.filters), {
                 savedSearchId: s.id,
+                segment: ctx.fixedSegment ? null : savedSegment(s.filters.segment),
                 sortBy: s.sort?.field ?? null,
                 sortAscending: s.sort ? String(s.sort.ascending) : null,
               })
@@ -448,7 +570,21 @@ export function SearchShell(props: SearchShellProps) {
           </Button>
           <SearchBox placeholder={`Search ${noun}`} label={`Search ${noun}`} />
         </div>
-        {selecting ? (
+        {selecting && indexMode && index ? (
+          <div className="flex min-w-0 lg:justify-end">
+            <IndexBulkBar
+              entity={entity}
+              ids={selectedIds}
+              actions={indexActions}
+              permissions={index.permissions}
+              canAddToList={permissions.listUpdate}
+              canAddToSequence={permissions.sequenceLaunch}
+              onClear={() => setSelected(new Set())}
+              onAddToList={setListIds}
+              onAddToSequence={setSequenceIds}
+            />
+          </div>
+        ) : selecting ? (
           <div className="flex min-w-0 lg:justify-end">
             <BulkBar
               entity={entity}
@@ -475,15 +611,19 @@ export function SearchShell(props: SearchShellProps) {
           </div>
         ) : (
           <div className="flex min-w-0 flex-wrap items-center gap-1.5 lg:justify-end">
-            <ResearchMenu
-              entity={entity}
-              selectedCount={0}
-              canEnrich={permissions.enrich}
-              canAsk={permissions.aiUse}
-              assistantHref={assistantHref}
-              onEnrichSelected={() => void researchSelection()}
-            />
-            <WorkflowMenu canCreate={permissions.workflowCreate} fromSearchHref={workflowHref} />
+            {indexMode ? null : (
+              <>
+                <ResearchMenu
+                  entity={entity}
+                  selectedCount={0}
+                  canEnrich={permissions.enrich}
+                  canAsk={permissions.aiUse}
+                  assistantHref={assistantHref}
+                  onEnrichSelected={() => void researchSelection()}
+                />
+                <WorkflowMenu canCreate={permissions.workflowCreate} fromSearchHref={workflowHref} />
+              </>
+            )}
             {permissions.saveSearch ? (
               <Button type="button" variant="outline" size="sm" onClick={() => setSaveOpen(true)}>
                 Save as new search
@@ -491,6 +631,7 @@ export function SearchShell(props: SearchShellProps) {
             ) : null}
             <SortPopover
               entity={entity}
+              fields={indexMode ? INDEX_SORT_FIELDS[entity] : undefined}
               sortBy={view.sortBy}
               ascending={view.sortAscending === "true"}
               onApply={(sortBy, asc) => setView({ sortBy, sortAscending: sortBy ? String(asc) : null })}
@@ -548,8 +689,13 @@ export function SearchShell(props: SearchShellProps) {
         pins={pins}
         onPinsChange={setPins}
         onApply={(next: FilterState) => replaceFilters(next)}
-        countUrl={`/api/v1/${apiBase}/search`}
+        countUrl={
+          indexMode
+            ? `/api/v1/index/${entity === "contact" ? "people" : "companies"}/search`
+            : `/api/v1/${apiBase}/search`
+        }
         fixedBody={fixedBody}
+        countBody={indexMode ? indexCountBody : undefined}
       />
 
       {permissions.saveSearch ? (
@@ -592,6 +738,26 @@ export function SearchShell(props: SearchShellProps) {
             apply({ personaId: [p.id] });
           }}
         />
+      ) : null}
+      {index ? (
+        <>
+          <IndexPersonSheet
+            person={indexPerson}
+            onClose={() => setIndexPerson(null)}
+            onOpenCompany={(id) => {
+              setIndexPerson(null);
+              setIndexCompanyId(id);
+            }}
+            actions={indexActions}
+            permissions={index.permissions}
+          />
+          <IndexCompanySheet
+            companyId={indexCompanyId}
+            onClose={() => setIndexCompanyId(null)}
+            actions={indexActions}
+            permissions={index.permissions}
+          />
+        </>
       ) : null}
       <CompanyDrawer
         companyId={companyId}

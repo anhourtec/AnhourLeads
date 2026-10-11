@@ -70,9 +70,14 @@ const companyShape = {
   country: textList(),
   city: textList(),
   location: textList(),
+  locationExclude: textList(),
+  /** Company name contains any of these. */
+  companies: textList(),
+  companiesExclude: textList(),
   industry: textList(),
   industryExclude: textList(),
   keywords: textList(),
+  keywordsExclude: textList(),
   technologies: textList(),
   employeeRanges: z
     .union([z.enum(EMPLOYEE_RANGE_KEYS), z.array(z.enum(EMPLOYEE_RANGE_KEYS))])
@@ -80,6 +85,8 @@ const companyShape = {
     .optional(),
   employeesMin: optionalInt(0, 10_000_000),
   employeesMax: optionalInt(0, 10_000_000),
+  /** Also match companies whose size is unknown (combined with the size filters by "or"). */
+  employeesUnknown: optionalBool,
   foundedMin: optionalInt(1000, 3000),
   foundedMax: optionalInt(1000, 3000),
   /** Job postings seen in the last 30 days. */
@@ -102,8 +109,12 @@ export const indexCompanySearchInput = z.strictObject({
 
 export const indexPeopleSearchInput = z.strictObject({
   ...companyShape,
+  /** Person name contains. */
+  name: z.string().trim().max(200).optional(),
   titles: textList(),
   titlesExclude: textList(),
+  /** Same as location (the index places people at their company). */
+  companyLocation: textList(),
   seniority: z
     .union([z.enum(SENIORITIES), z.array(z.enum(SENIORITIES))])
     .transform((v) => (Array.isArray(v) ? v : [v]))
@@ -163,40 +174,42 @@ function personSavedSql(organizationId: string): SQL {
     limit 1)`;
 }
 
+/** City, region or country contains any of the values. */
+const placeLike = (values: string[]) =>
+  or(
+    ...values.map((l) =>
+      or(
+        sql`${ic.city} ilike ${likePattern(l)}`,
+        sql`${ic.region} ilike ${likePattern(l)}`,
+        sql`${ic.country} ilike ${likePattern(l)}`,
+      ),
+    ),
+  ) as SQL;
+
+const keywordMatch = (values: string[]) =>
+  or(
+    sql`${ic.keywords} && ${sql`array[${sql.join(
+      values.map((k) => sql`${k.toLowerCase()}`),
+      sql`, `,
+    )}]::text[]`}`,
+    ...values.map((k) => sql`${ic.description} ilike ${likePattern(k)}`),
+    ...values.map((k) => sql`${ic.name} ilike ${likePattern(k)}`),
+  ) as SQL;
+
 function companyConditions(f: Omit<IndexCompanyFilters, "sortBy">, organizationId: string, forPeople: boolean): SQL[] {
   const out: SQL[] = [companyNotOptedOutSql()];
   if (f.q && !forPeople)
     out.push(or(sql`${ic.name} ilike ${likePattern(f.q)}`, sql`${ic.domain} ilike ${likePattern(f.q)}`) as SQL);
   if (f.country?.length) out.push(lowerIn(ic.country, f.country));
   if (f.city?.length) out.push(lowerIn(ic.city, f.city));
-  if (f.location?.length) {
-    out.push(
-      or(
-        ...f.location.map((l) =>
-          or(
-            sql`${ic.city} ilike ${likePattern(l)}`,
-            sql`${ic.region} ilike ${likePattern(l)}`,
-            sql`${ic.country} ilike ${likePattern(l)}`,
-          ),
-        ),
-      ) as SQL,
-    );
-  }
+  if (f.location?.length) out.push(placeLike(f.location));
+  if (f.locationExclude?.length) out.push(sql`not coalesce(${placeLike(f.locationExclude)}, false)`);
+  if (f.companies?.length) out.push(anyLike(ic.name, f.companies));
+  if (f.companiesExclude?.length) out.push(sql`not coalesce(${anyLike(ic.name, f.companiesExclude)}, false)`);
   if (f.industry?.length) out.push(anyLike(ic.industry, f.industry));
   if (f.industryExclude?.length) out.push(sql`not coalesce(${anyLike(ic.industry, f.industryExclude)}, false)`);
-  if (f.keywords?.length) {
-    const lowered = f.keywords.map((k) => k.toLowerCase());
-    out.push(
-      or(
-        sql`${ic.keywords} && ${sql`array[${sql.join(
-          lowered.map((k) => sql`${k}`),
-          sql`, `,
-        )}]::text[]`}`,
-        ...f.keywords.map((k) => sql`${ic.description} ilike ${likePattern(k)}`),
-        ...f.keywords.map((k) => sql`${ic.name} ilike ${likePattern(k)}`),
-      ) as SQL,
-    );
-  }
+  if (f.keywords?.length) out.push(keywordMatch(f.keywords));
+  if (f.keywordsExclude?.length) out.push(sql`not coalesce(${keywordMatch(f.keywordsExclude)}, false)`);
   if (f.technologies?.length) {
     const lowered = f.technologies.map((t) => t.toLowerCase());
     out.push(
@@ -206,20 +219,20 @@ function companyConditions(f: Omit<IndexCompanyFilters, "sortBy">, organizationI
       )}))`,
     );
   }
-  if (f.employeeRanges?.length) {
-    const ranges = EMPLOYEE_RANGES.filter((r) => f.employeeRanges?.includes(r.key));
-    out.push(
-      or(
-        ...ranges.map((r) =>
-          r.max === null
-            ? sql`${ic.employeeCount} >= ${r.min}`
-            : sql`${ic.employeeCount} between ${r.min} and ${r.max}`,
-        ),
+  // Size: any chosen range, the min/max window, or unknown size (as in workspace search).
+  const size: SQL[] = EMPLOYEE_RANGES.filter((r) => f.employeeRanges?.includes(r.key)).map((r) =>
+    r.max === null ? sql`${ic.employeeCount} >= ${r.min}` : sql`${ic.employeeCount} between ${r.min} and ${r.max}`,
+  );
+  if (f.employeesMin !== undefined || f.employeesMax !== undefined) {
+    size.push(
+      and(
+        f.employeesMin !== undefined ? sql`${ic.employeeCount} >= ${f.employeesMin}` : undefined,
+        f.employeesMax !== undefined ? sql`${ic.employeeCount} <= ${f.employeesMax}` : undefined,
       ) as SQL,
     );
   }
-  if (f.employeesMin !== undefined) out.push(sql`${ic.employeeCount} >= ${f.employeesMin}`);
-  if (f.employeesMax !== undefined) out.push(sql`${ic.employeeCount} <= ${f.employeesMax}`);
+  if (f.employeesUnknown) size.push(isNull(ic.employeeCount) as SQL);
+  if (size.length) out.push(or(...size) as SQL);
   if (f.foundedMin !== undefined) out.push(sql`${ic.foundedYear} >= ${f.foundedMin}`);
   if (f.foundedMax !== undefined) out.push(sql`${ic.foundedYear} <= ${f.foundedMax}`);
   if (f.hiring !== undefined) {
@@ -249,6 +262,8 @@ function peopleConditions(f: IndexPeopleFilters, organizationId: string): SQL[] 
         sql`${ic.name} ilike ${likePattern(f.q)}`,
       ) as SQL,
     );
+  if (f.name) out.push(sql`${ip.fullName} ilike ${likePattern(f.name)}`);
+  if (f.companyLocation?.length) out.push(placeLike(f.companyLocation));
   if (f.titles?.length) out.push(anyLike(sql`${ip.title}`, f.titles));
   if (f.titlesExclude?.length) out.push(sql`not coalesce(${anyLike(sql`${ip.title}`, f.titlesExclude)}, false)`);
   if (f.seniority?.length) out.push(inArray(ip.seniority, f.seniority));
@@ -459,6 +474,56 @@ export async function searchIndexPeople(
     })),
     total: Number(total?.n ?? 0),
   };
+}
+
+export interface IndexSegmentCounts {
+  total: number;
+  net_new: number;
+  /** Index rows this workspace already holds. */
+  saved: number;
+}
+
+/** Total / Net new / Saved over the index under the filters (the segment itself ignored), in one query. */
+export async function indexSegmentCounts(
+  actor: Actor,
+  entity: "contact" | "company",
+  filters: IndexPeopleFilters | IndexCompanyFilters,
+): Promise<IndexSegmentCounts> {
+  const f = { ...filters, segment: undefined };
+  if (entity === "company") {
+    const saved = sql`${companySavedSql(actor.organizationId)} is not null`;
+    const [row] = await db
+      .select({
+        total: sql<number>`count(*)::int`,
+        saved: sql<number>`(count(*) filter (where ${saved}))::int`,
+      })
+      .from(ic)
+      .where(and(...companyConditions(f, actor.organizationId, false)));
+    const total = Number(row?.total ?? 0);
+    const savedN = Number(row?.saved ?? 0);
+    return { total, net_new: total - savedN, saved: savedN };
+  }
+  const saved = sql`${personSavedSql(actor.organizationId)} is not null`;
+  const [row] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      saved: sql<number>`(count(*) filter (where ${saved}))::int`,
+    })
+    .from(ip)
+    .innerJoin(ic, eq(ic.id, ip.companyId))
+    .where(and(...peopleConditions(f as IndexPeopleFilters, actor.organizationId)));
+  const total = Number(row?.total ?? 0);
+  const savedN = Number(row?.saved ?? 0);
+  return { total, net_new: total - savedN, saved: savedN };
+}
+
+/** Whether the index holds anything searchable at all (decides the default tab and the empty state). */
+export async function indexHasRows(entity: "contact" | "company"): Promise<boolean> {
+  const rows =
+    entity === "company"
+      ? await db.select({ id: ic.id }).from(ic).limit(1)
+      : await db.select({ id: ip.id }).from(ip).where(isNull(ip.goneAt)).limit(1);
+  return rows.length > 0;
 }
 
 /**

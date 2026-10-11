@@ -1,5 +1,5 @@
 import { pageFrom, pagination, readJson, route } from "@/server/http/route";
-import { indexCompanySearchInput, searchIndexCompanies } from "@/server/services/discovery";
+import { indexCompanySearchInput, indexSegmentCounts, searchIndexCompanies } from "@/server/services/discovery";
 import { asObject } from "@/server/services/records";
 
 /**
@@ -11,19 +11,15 @@ export const POST = route(
     const { includeCounts, ...body } = asObject(await readJson(req));
     const filters = indexCompanySearchInput.parse(body);
     const page = pageFrom(body);
-    const result = await searchIndexCompanies(actor, filters, page);
-    const one = { perPage: 1, offset: 0 };
-    const counts =
-      includeCounts === true
-        ? {
-            counts: {
-              total: (await searchIndexCompanies(actor, { ...filters, segment: "total" }, one)).total,
-              net_new: (await searchIndexCompanies(actor, { ...filters, segment: "net_new" }, one)).total,
-              saved: (await searchIndexCompanies(actor, { ...filters, segment: "saved" }, one)).total,
-            },
-          }
-        : {};
-    return { companies: result.companies, pagination: pagination(page, result.total), ...counts };
+    const [result, counts] = await Promise.all([
+      searchIndexCompanies(actor, filters, page),
+      includeCounts === true ? indexSegmentCounts(actor, "company", filters) : Promise.resolve(null),
+    ]);
+    return {
+      companies: result.companies,
+      pagination: pagination(page, result.total),
+      ...(counts ? { counts } : {}),
+    };
   },
   { permission: "search:run" },
 );

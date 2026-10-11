@@ -1,5 +1,5 @@
 import { pageFrom, pagination, readJson, route } from "@/server/http/route";
-import { indexPeopleSearchInput, searchIndexPeople } from "@/server/services/discovery";
+import { indexPeopleSearchInput, indexSegmentCounts, searchIndexPeople } from "@/server/services/discovery";
 import { asObject } from "@/server/services/records";
 
 /**
@@ -12,21 +12,11 @@ export const POST = route(
     const { includeCounts, ...body } = asObject(await readJson(req));
     const filters = indexPeopleSearchInput.parse(body);
     const page = pageFrom(body);
-    const result = await searchIndexPeople(actor, filters, page);
-    const counts =
-      includeCounts === true
-        ? {
-            counts: {
-              total: (await searchIndexPeople(actor, { ...filters, segment: "total" }, { perPage: 1, offset: 0 }))
-                .total,
-              net_new: (await searchIndexPeople(actor, { ...filters, segment: "net_new" }, { perPage: 1, offset: 0 }))
-                .total,
-              saved: (await searchIndexPeople(actor, { ...filters, segment: "saved" }, { perPage: 1, offset: 0 }))
-                .total,
-            },
-          }
-        : {};
-    return { people: result.people, pagination: pagination(page, result.total), ...counts };
+    const [result, counts] = await Promise.all([
+      searchIndexPeople(actor, filters, page),
+      includeCounts === true ? indexSegmentCounts(actor, "contact", filters) : Promise.resolve(null),
+    ]);
+    return { people: result.people, pagination: pagination(page, result.total), ...(counts ? { counts } : {}) };
   },
   { permission: "search:run" },
 );
