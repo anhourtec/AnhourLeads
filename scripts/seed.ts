@@ -2,6 +2,10 @@
  * Seed demo data. `npm run db:seed` (idempotent: skips when the demo workspace exists)
  * or `npm run db:seed -- --reset` (truncates every table first; used by the test harness).
  *
+ * `--reset` keeps the installation-wide discovery index and its crawl state (INDEX_TABLES and the
+ * pipeline settings row), so a test run never throws away a real crawl. Add `--reset-index` to wipe
+ * those too. Either way the default seed sources are created when missing.
+ *
  * Creates the platform administrator (SEED_PLATFORM_ADMIN_*), workspace "Acme Outbound" with one
  * account per role, a second workspace "Globex" for cross-tenant isolation checks, and sample data.
  * Every demo account uses the password DEMO_PASSWORD.
@@ -48,19 +52,65 @@ async function addMember(organizationId: string, userId: string, role: string) {
   await db.insert(schema.member).values({ id: id(), organizationId, userId, role });
 }
 
-async function reset() {
+/**
+ * The installation-wide discovery index and crawl state. None of them reference workspace tables,
+ * so they survive a workspace reset. (crawl_job / crawl_page are workspace research jobs: wiped.)
+ */
+const INDEX_TABLES = [
+  "index_company",
+  "index_person",
+  "index_job_posting",
+  "index_news",
+  "index_optout",
+  "crawl_host",
+  "crawl_frontier",
+  "seed_source",
+];
+/** Pipeline settings live in the generic verification table (src/server/discovery/settings.ts). */
+const DISCOVERY_SETTINGS_ID = "discovery:settings";
+
+async function reset(options: { index: boolean }) {
+  const keep = new Set(["__drizzle_migrations", ...(options.index ? [] : [...INDEX_TABLES, "verification"])]);
   const tables = await db.execute<{ tablename: string }>(
-    sql`select tablename from pg_tables where schemaname = 'public' and tablename <> '__drizzle_migrations'`,
+    sql`select tablename from pg_tables where schemaname = 'public'`,
   );
-  const names = tables.rows.map((r) => `"${r.tablename}"`).join(", ");
+  const names = tables.rows
+    .filter((r) => !keep.has(r.tablename))
+    .map((r) => `"${r.tablename}"`)
+    .join(", ");
   if (names) await db.execute(sql.raw(`truncate ${names} restart identity cascade`));
-  // Cached tenants, brands and rate-limit counters refer to the old rows.
+  if (!options.index) {
+    // Auth tokens and removal requests go; the pipeline settings stay with the index.
+    await db.execute(sql`delete from verification where identifier <> ${DISCOVERY_SETTINGS_ID}`);
+  }
+  // Cached tenants, brands and rate-limit counters refer to the old rows. Live crawler workers'
+  // presence keys stay unless the index is wiped too.
   if (process.env.REDIS_URL) {
     const redis = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
-    const keys = await redis.keys("anhour:*");
+    const keys = (await redis.keys("anhour:*")).filter((k) => options.index || !k.startsWith("anhour:crawler:"));
     if (keys.length) await redis.del(...keys);
     redis.disconnect();
   }
+}
+
+/** The built-in seed sources (mirrors ensureDefaultSources in src/server/discovery/seeds.ts). */
+async function ensureSeedSources() {
+  const defaults: Array<typeof schema.seedSource.$inferInsert> = [
+    {
+      kind: "wikidata",
+      name: "Wikidata businesses",
+      enabled: false,
+      config: { endpoint: "https://query.wikidata.org/sparql", maxRows: 500, pageSize: 200, everyDays: 30 },
+    },
+    { kind: "sitemap", name: "Company sitemaps", enabled: false, config: { maxCompanies: 500, everyDays: 30 } },
+    { kind: "ats_boards", name: "Public job boards", enabled: true, config: { everyDays: 1 } },
+    { kind: "manual", name: "Added by hand", enabled: true, config: { domains: [] } },
+  ];
+  // One per kind: a kind the operator already has a source for (renamed or not) is left alone.
+  const existing = await db.select({ kind: schema.seedSource.kind }).from(schema.seedSource);
+  const kinds = new Set(existing.map((r) => r.kind));
+  const missing = defaults.filter((d) => !kinds.has(d.kind));
+  if (missing.length) await db.insert(schema.seedSource).values(missing);
 }
 
 const COMPANIES = [
@@ -328,7 +378,9 @@ async function seedAcmeData(organizationId: string, owners: Record<(typeof DEMO_
 }
 
 async function main() {
-  if (process.argv.includes("--reset")) await reset();
+  const wipeIndex = process.argv.includes("--reset-index");
+  if (process.argv.includes("--reset") || wipeIndex) await reset({ index: wipeIndex });
+  await ensureSeedSources();
 
   const [existing] = await db.select().from(schema.organization).where(eq(schema.organization.slug, "acme")).limit(1);
   if (existing) {

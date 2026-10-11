@@ -1,0 +1,13 @@
+# Development image for the background workers in the root docker-compose.yml (`--profile crawler`):
+# the discovery crawler and the scheduler. Dependencies only; the source (src/, scripts/,
+# tsconfig.json) is bind-mounted read-only, so `docker compose --profile crawler restart` picks up
+# code changes without a rebuild. Rebuild after package-lock.json changes:
+#   docker compose --profile crawler build
+# Production uses deploy/Dockerfile (a full build) instead.
+FROM node:22-alpine
+WORKDIR /app
+COPY package.json package-lock.json ./
+# Linux binaries (esbuild for tsx) come from this install, never from the host's node_modules.
+RUN HUSKY=0 npm ci --ignore-scripts && npm cache clean --force
+ENV NODE_ENV=development NEXT_TELEMETRY_DISABLED=1
+USER node

@@ -12,10 +12,12 @@
  * default /tmp/scheduler-heartbeat). Stops cleanly on SIGTERM / SIGINT: no new runs start and
  * running ones are awaited (up to 60 s).
  *
- * Environment: the app's own settings, plus SCHEDULER_JOBS (comma-separated names to run; default all)
+ * Environment: the app's own settings, plus SCHEDULER_JOBS (comma-separated names to run; default all;
+ * only the listed jobs' modules are loaded)
  * and SCHEDULER_DRY_RUN=true (log the plan and exit).
  */
 
+import type { Job } from "../src/server/jobs/types";
 import { existsSync, writeFileSync } from "node:fs";
 
 // Local runs read .env; in containers the environment comes from compose.
@@ -26,15 +28,32 @@ const TICK_MS = 5_000;
 const FIRST_RUN_DELAY_MS = 15_000;
 const SHUTDOWN_WAIT_MS = 60_000;
 
+/**
+ * One loader per job, so SCHEDULER_JOBS imports only the modules it needs: a job whose import chain
+ * fails outside Next (e.g. a service importing next/navigation) can't take the others down.
+ */
+const JOB_LOADERS: Record<string, () => Promise<Job>> = {
+  domains: () => import("../src/server/jobs/domains").then((m) => m.domainsJob),
+  crawl: () => import("../src/server/jobs/crawl").then((m) => m.crawlJob),
+  sequences: () => import("../src/server/jobs/sequences").then((m) => m.sequencesJob),
+  workflows: () => import("../src/server/jobs/workflows").then((m) => m.workflowsJob),
+  enrichment: () => import("../src/server/jobs/enrichment").then((m) => m.enrichmentJob),
+  discovery: () => import("../src/server/jobs/discovery").then((m) => m.discoveryJob),
+};
+
 async function main() {
-  const [{ log }, { JOBS }] = await Promise.all([import("../src/server/log"), import("../src/server/jobs/registry")]);
+  const { log } = await import("../src/server/log");
   const logger = log.child({ component: "scheduler" });
 
   const only = (process.env.SCHEDULER_JOBS ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const jobs = only.length ? JOBS.filter((j) => only.includes(j.name)) : JOBS;
+  const unknown = only.filter((name) => !JOB_LOADERS[name]);
+  if (unknown.length) logger.warn("unknown jobs in SCHEDULER_JOBS", { unknown });
+  const jobs: Job[] = only.length
+    ? await Promise.all(only.filter((name) => JOB_LOADERS[name]).map((name) => JOB_LOADERS[name]()))
+    : (await import("../src/server/jobs/registry")).JOBS;
   logger.info("scheduler started", { jobs: jobs.map((j) => ({ job: j.name, everySeconds: j.everySeconds })) });
   if (process.env.SCHEDULER_DRY_RUN === "true") process.exit(0);
 
