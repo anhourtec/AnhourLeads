@@ -38,6 +38,7 @@ import {
   recentCompletedJob,
   validateSeed,
 } from "./research";
+import { recordLookups } from "./usage-events";
 
 type CompanyRow = typeof schema.company.$inferSelect;
 type ContactRow = typeof schema.contact.$inferSelect;
@@ -95,6 +96,7 @@ export async function runEmailVerification(actor: Actor, input: z.infer<typeof e
   if (!email) throw invalid("email", "Enter an email address.");
   const result = await verifyEmail(email, { organizationId: actor.organizationId, force: input.force });
   if (contact) await recordContactVerification(actor, contact, result);
+  await recordLookups(actor, [{ type: "email_verification", cached: result.cached }]);
   return {
     ...result,
     contactId: contact?.id ?? null,
@@ -379,6 +381,7 @@ export async function matchPerson(actor: Actor, input: PersonMatchInput) {
     }
   }
 
+  await recordLookups(actor, lookups);
   return {
     person: {
       id: contact?.id ?? null,
@@ -532,6 +535,7 @@ export async function enrichOrganization(actor: Actor, input: OrganizationEnrich
     job = await crawlJobById(actor, created.id);
   }
   lookups.push({ type: "website_crawl", target: domain, cached, cost: 0 });
+  await recordLookups(actor, lookups);
 
   const findings = findingsOf(job);
   let fields: Awaited<ReturnType<typeof applyFindingsToCompany>> = [];
@@ -594,6 +598,12 @@ export async function bulkEnrichOrganizations(actor: Actor, input: z.infer<typeo
     queued.push(job.id);
     organizations.push({ input: request, status: "queued", error: null, crawlJobId: job.id, organization: null });
   }
+  await recordLookups(
+    actor,
+    organizations
+      .filter((o) => o.status !== "error")
+      .map((o) => ({ type: "website_crawl" as const, cached: o.status === "cached" })),
+  );
   return {
     result: {
       status: "success",
