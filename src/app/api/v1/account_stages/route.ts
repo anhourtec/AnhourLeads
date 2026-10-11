@@ -1,4 +1,10 @@
 import { route } from "@/server/http/route";
-import { accountStages } from "@/server/services/companies";
+import { apolloStageList } from "@/server/services/record-stages";
 
-export const GET = route(async () => accountStages(), { permission: "company:read" });
+/** The workspace's account stages with its own display names (settings → contact stages → account stages). */
+export const GET = route(
+  async ({ actor }) => ({ account_stages: await apolloStageList(actor.organizationId, "company") }),
+  {
+    permission: "company:read",
+  },
+);

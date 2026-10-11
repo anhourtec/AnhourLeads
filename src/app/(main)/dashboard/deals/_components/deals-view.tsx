@@ -1,413 +1,446 @@
 "use client";
 
-import { useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import {
-  ArrowRightLeft,
-  EllipsisVertical,
+  ArrowDownUp,
+  ChevronDown,
+  Filter,
   Handshake,
   Kanban,
-  Pencil,
+  Layers,
   Plus,
   Search,
+  Settings2,
   Table2,
-  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { apiFetch } from "@/lib/api-fetch";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format-display";
-import { DEAL_STAGE_INFO, DEAL_STAGES, type DealStage } from "@/lib/pipeline-constants";
+import { formatMoney, formatNumber } from "@/lib/format-display";
 import { can, type Role } from "@/lib/rbac/permissions";
-import type { DealDto, StageTotal } from "@/server/services/deals";
+import type { DealDto, PipelineStageTotal } from "@/server/services/deals";
+import type { PipelineDto } from "@/server/services/pipelines";
 
-import { ConfirmDialog } from "../../_components/pipeline/confirm-dialog";
 import { PageHeader } from "../../_components/pipeline/page-header";
-import { StagePill } from "../../_components/pipeline/pills";
 import { useUrlFilters } from "../../_components/pipeline/use-url-filters";
-import { DealDialog, type MemberOption } from "./deal-dialog";
+import { DealDrawer } from "./deal-drawer";
+import { type DealCustomField, DealFormDialog, type DealPrefill, type MemberOption } from "./deal-form-dialog";
+import { activeFilterCount, type DealParams, type DealSort } from "./deal-params";
+import { DealsBoard } from "./deals-board";
+import { DealsFilters } from "./deals-filters";
+import { DealsIntroDialog } from "./deals-intro-dialog";
+import { DealsTable } from "./deals-table";
+import { ImportDealsDialog } from "./import-deals-dialog";
 
-interface DealActionsProps {
-  deal: DealDto;
-  canUpdate: boolean;
-  canDelete: boolean;
-  onEdit: (deal: DealDto) => void;
-  onMove: (deal: DealDto, stage: DealStage) => void;
-  onDelete: (deal: DealDto) => void;
-}
+const SORT_LABELS: Record<DealSort, string> = {
+  created_at: "Created date",
+  close_date: "Close date",
+  amount: "Amount",
+};
 
-function DealActions({ deal, canUpdate, canDelete, onEdit, onMove, onDelete }: DealActionsProps) {
-  if (!canUpdate && !canDelete) return null;
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${deal.name}`}>
-          <EllipsisVertical />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-44">
-        {canUpdate ? (
-          <>
-            <DropdownMenuItem onSelect={() => onEdit(deal)}>
-              <Pencil />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-muted-foreground text-xs">Move to</DropdownMenuLabel>
-            {DEAL_STAGES.filter((s) => s !== deal.stage).map((stage) => (
-              <DropdownMenuItem key={stage} onSelect={() => onMove(deal, stage)}>
-                <ArrowRightLeft />
-                {DEAL_STAGE_INFO[stage].name}
-              </DropdownMenuItem>
-            ))}
-          </>
-        ) : null}
-        {canDelete ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={() => onDelete(deal)}>
-              <Trash2 />
-              Delete
-            </DropdownMenuItem>
-          </>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function DealCard({ deal, actions }: { deal: DealDto; actions: Omit<DealActionsProps, "deal"> }) {
-  return (
-    <li className="flex flex-col gap-2 rounded-lg border bg-card p-3">
-      <div className="flex items-start justify-between gap-2">
-        <span className="min-w-0 break-words font-medium text-sm">{deal.name}</span>
-        <DealActions deal={deal} {...actions} />
-      </div>
-      {deal.company || deal.contact ? (
-        <span className="truncate text-muted-foreground text-xs">
-          {[deal.company?.name, deal.contact?.name].filter(Boolean).join(" · ")}
-        </span>
-      ) : null}
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span className="font-medium font-mono tabular-nums">{formatMoney(deal.amount, deal.currency)}</span>
-        <span className="truncate text-muted-foreground">
-          {deal.closeDate ? `Closes ${formatDate(deal.closeDate)}` : (deal.owner?.name ?? "")}
-        </span>
-      </div>
-    </li>
-  );
+interface SearchResult {
+  deals: DealDto[];
+  total: number;
+  pipelineTotals: PipelineStageTotal[];
 }
 
 export function DealsView({
-  deals,
-  totals,
-  total,
+  params,
+  pipelines,
+  pipelineId,
+  result,
   limit,
   members,
+  customFields,
   currentUserId,
   role,
-  view,
+  analytics,
+  prefill = null,
 }: {
-  readonly deals: DealDto[];
-  readonly totals: StageTotal[];
-  readonly total: number;
+  readonly params: DealParams;
+  readonly pipelines: PipelineDto[];
+  readonly pipelineId: string | null;
+  readonly result: SearchResult | null;
   readonly limit: number;
   readonly members: MemberOption[];
+  readonly customFields: DealCustomField[];
   readonly currentUserId: string;
   readonly role: Role;
-  readonly view: "board" | "table";
+  readonly analytics: ReactNode;
+  readonly prefill?: DealPrefill | null;
 }) {
   const router = useRouter();
   const filters = useUrlFilters();
-  const [query, setQuery] = useState(filters.get("q"));
-  const [dialog, setDialog] = useState<{ open: boolean; deal: DealDto | null; stage: DealStage }>({
-    open: false,
+  const [query, setQuery] = useState(params.q);
+  const [deals, setDeals] = useState<DealDto[]>(result?.deals ?? []);
+  const [totals, setTotals] = useState<PipelineStageTotal[]>(result?.pipelineTotals ?? []);
+  const [form, setForm] = useState<{
+    open: boolean;
+    deal: DealDto | null;
+    stageId?: string;
+    nonce: number;
+    prefill?: DealPrefill | null;
+  }>({
+    prefill,
+    open: params.create && can(role, "deal:create"),
     deal: null,
-    stage: "qualify",
+    nonce: 0,
   });
-  const [toDelete, setToDelete] = useState<DealDto | null>(null);
+  const [openDealId, setOpenDealId] = useState<string | null>(params.deal || null);
+  const [showFilters, setShowFilters] = useState(params.filters || activeFilterCount(params) > 0);
+
+  useEffect(() => {
+    setDeals(result?.deals ?? []);
+    setTotals(result?.pipelineTotals ?? []);
+  }, [result]);
+
   const canCreate = can(role, "deal:create");
   const canUpdate = can(role, "deal:update");
-  const canDelete = can(role, "deal:delete");
-  const hasFilters = Boolean(filters.get("q") || filters.get("owner"));
-  const openValue = totals.filter((t) => !DEAL_STAGE_INFO[t.stage].isClosed).reduce((s, t) => s + t.amount, 0);
+  const pipeline = pipelines.find((p) => p.id === pipelineId) ?? null;
+  const defaultPipeline = pipelines.find((p) => p.isDefault) ?? pipelines[0];
+  const openDeal = useMemo(() => deals.find((d) => d.id === openDealId) ?? null, [deals, openDealId]);
+  const total = result?.total ?? 0;
+  const filterCount = activeFilterCount(params);
+  const hasFilters = Boolean(params.q) || filterCount > 0;
+  const openValue = totals
+    .filter((t) => pipeline?.stages.find((s) => s.id === t.stageId)?.type === "open")
+    .reduce((s, t) => s + t.amount, 0);
 
-  async function move(deal: DealDto, stage: DealStage) {
-    const res = await apiFetch(`/api/v1/opportunities/${deal.id}`, { method: "PATCH", body: { stage } });
+  async function move(deal: DealDto, stageId: string) {
+    if (deal.stageId === stageId) return;
+    const target = pipelines.flatMap((p) => p.stages).find((s) => s.id === stageId);
+    const before = { deals, totals };
+    // Show the move at once; roll back if the server refuses it.
+    setDeals((list) =>
+      list.map((d) =>
+        d.id === deal.id && target
+          ? {
+              ...d,
+              stageId,
+              stageName: target.name,
+              stageType: target.type,
+              isClosed: target.type !== "open",
+              isWon: target.type === "won",
+            }
+          : d,
+      ),
+    );
+    setTotals((list) => {
+      const amount = deal.amount ?? 0;
+      const next = list.map((t) => {
+        if (t.stageId === deal.stageId) return { ...t, count: t.count - 1, amount: t.amount - amount };
+        if (t.stageId === stageId) return { ...t, count: t.count + 1, amount: t.amount + amount };
+        return t;
+      });
+      return next.some((t) => t.stageId === stageId) ? next : [...next, { stageId, count: 1, amount }];
+    });
+    const res = await apiFetch(`/api/v1/opportunities/${deal.id}`, { method: "PATCH", body: { stageId } });
     if (!res.ok) {
+      setDeals(before.deals);
+      setTotals(before.totals);
       toast.error(res.error);
       return;
     }
-    toast.success(`Moved to ${DEAL_STAGE_INFO[stage].name.toLowerCase()}`);
+    toast.success(`Moved to ${target?.name ?? "the new stage"}`);
     router.refresh();
   }
 
-  async function remove(): Promise<boolean> {
-    if (!toDelete) return true;
-    const res = await apiFetch(`/api/v1/opportunities/${toDelete.id}`, { method: "DELETE" });
-    if (!res.ok) {
-      toast.error(res.error);
-      return false;
-    }
-    toast.success("Deal deleted");
-    router.refresh();
-    return true;
-  }
+  const openCreate = (stageId?: string) =>
+    setForm((f) => ({ open: true, deal: null, stageId, nonce: f.nonce + 1, prefill: null }));
 
-  const actions = {
-    canUpdate,
-    canDelete,
-    onEdit: (deal: DealDto) => setDialog({ open: true, deal, stage: deal.stage }),
-    onMove: (deal: DealDto, stage: DealStage) => void move(deal, stage),
-    onDelete: (deal: DealDto) => setToDelete(deal),
-  };
+  const pipelineLabel = pipeline?.name ?? "All pipelines";
 
   return (
-    <div className="flex min-w-0 flex-col gap-4 md:gap-6">
+    <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
         title="Deals"
-        description={
-          <>
-            <span className="font-mono tabular-nums">{formatMoney(openValue)}</span> in open pipeline across{" "}
-            <span className="font-mono tabular-nums">{formatNumber(total)}</span> {total === 1 ? "deal" : "deals"}.
-          </>
-        }
         actions={
           canCreate ? (
-            <Button size="sm" onClick={() => setDialog({ open: true, deal: null, stage: "qualify" })}>
-              <Plus data-icon="inline-start" />
-              New deal
-            </Button>
+            <>
+              <ImportDealsDialog pipelines={pipelines} defaultPipelineId={pipeline?.id ?? defaultPipeline.id} />
+              <Button size="sm" onClick={() => openCreate()}>
+                <Plus data-icon="inline-start" />
+                Create deal
+              </Button>
+            </>
           ) : null
         }
       />
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <form
-            className="w-full sm:w-64"
-            onSubmit={(e) => {
-              e.preventDefault();
-              filters.set({ q: query.trim() || null });
-            }}
-          >
-            <InputGroup>
-              <InputGroupAddon>
-                <Search aria-hidden="true" />
-              </InputGroupAddon>
-              <InputGroupInput
-                aria-label="Search deals"
-                placeholder="Search deals"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </InputGroup>
-          </form>
-          <NativeSelect
-            size="sm"
-            aria-label="Owner"
-            value={filters.get("owner")}
-            onChange={(e) => filters.set({ owner: e.target.value })}
-            className="w-full sm:w-44"
-          >
-            <NativeSelectOption value="">Everyone's deals</NativeSelectOption>
-            <NativeSelectOption value="me">My deals</NativeSelectOption>
-          </NativeSelect>
-        </div>
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          size="sm"
-          value={view}
-          onValueChange={(v) => v && filters.set({ view: v === "table" ? "table" : null })}
-          aria-label="Layout"
+      <Tabs value={params.tab} onValueChange={(v) => filters.set({ tab: v === "analytics" ? "analytics" : null })}>
+        <TabsList
+          variant="line"
+          className="w-full justify-start overflow-x-auto border-b *:data-[slot=tabs-trigger]:flex-none"
         >
-          <ToggleGroupItem value="board" aria-label="Board">
-            <Kanban data-icon="inline-start" />
-            Board
-          </ToggleGroupItem>
-          <ToggleGroupItem value="table" aria-label="Table">
-            <Table2 data-icon="inline-start" />
-            Table
-          </ToggleGroupItem>
-        </ToggleGroup>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="analytics">
+            Analytics
+            <Badge variant="secondary" className="ml-1 bg-sky-500/10 text-sky-700 dark:text-sky-400">
+              New
+            </Badge>
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" aria-label={`Pipeline: ${pipelineLabel}`}>
+                <Layers data-icon="inline-start" />
+                <span className="max-w-40 truncate">{pipelineLabel}</span>
+                <ChevronDown aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-56">
+              <DropdownMenuLabel className="text-muted-foreground text-xs">Pipelines</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={pipeline?.id ?? "all"}
+                onValueChange={(v) => {
+                  if (v === "all") filters.set({ pipeline: "all", viewMode: "table", stage: null });
+                  else filters.set({ pipeline: v, stage: null });
+                }}
+              >
+                <DropdownMenuRadioItem value="all">All pipelines</DropdownMenuRadioItem>
+                {pipelines.map((p) => (
+                  <DropdownMenuRadioItem key={p.id} value={p.id}>
+                    {p.name}
+                    {p.isDefault ? <span className="ml-auto text-muted-foreground text-xs">Default</span> : null}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              {can(role, "pipeline:manage") ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <Link
+                    href="/dashboard/settings/pipelines"
+                    className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+                  >
+                    <Settings2 className="size-4" aria-hidden="true" />
+                    Manage pipelines
+                  </Link>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {params.tab === "overview" ? (
+            <>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                value={params.view}
+                onValueChange={(v) => {
+                  if (!v) return;
+                  filters.set(
+                    v === "table"
+                      ? { viewMode: "table" }
+                      : { viewMode: null, pipeline: params.pipeline === "all" ? null : params.pipeline || null },
+                  );
+                }}
+                aria-label="View"
+              >
+                <ToggleGroupItem value="kanban" aria-label="Board">
+                  <Kanban />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="table" aria-label="Table">
+                  <Table2 />
+                </ToggleGroupItem>
+              </ToggleGroup>
+              <Button
+                variant={showFilters ? "secondary" : "outline"}
+                size="sm"
+                aria-expanded={showFilters}
+                onClick={() => setShowFilters((v) => !v)}
+              >
+                <Filter data-icon="inline-start" />
+                {showFilters ? "Hide filters" : "Show filters"}
+                {filterCount ? <span className="font-mono text-xs">({filterCount})</span> : null}
+              </Button>
+            </>
+          ) : null}
+        </div>
+        {params.tab === "overview" ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <form
+              className="w-full sm:w-56"
+              onSubmit={(e) => {
+                e.preventDefault();
+                filters.set({ q: query.trim() || null });
+              }}
+            >
+              <InputGroup>
+                <InputGroupAddon>
+                  <Search aria-hidden="true" />
+                </InputGroupAddon>
+                <InputGroupInput
+                  aria-label="Search deals"
+                  placeholder="Search deals"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </InputGroup>
+            </form>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" aria-label={`Sort: ${SORT_LABELS[params.sort]}`}>
+                  <ArrowDownUp data-icon="inline-start" />
+                  {SORT_LABELS[params.sort]}
+                  <ChevronDown aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuRadioGroup
+                  value={params.sort}
+                  onValueChange={(v) => filters.set({ sort: v === "created_at" ? null : v })}
+                >
+                  {(Object.keys(SORT_LABELS) as DealSort[]).map((s) => (
+                    <DropdownMenuRadioItem key={s} value={s}>
+                      {SORT_LABELS[s]}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : null}
       </div>
 
-      {total === 0 ? (
-        <Empty className="border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <Handshake aria-hidden="true" />
-            </EmptyMedia>
-            <EmptyTitle>{hasFilters ? "No deals match" : "No deals yet"}</EmptyTitle>
-            <EmptyDescription>
-              {hasFilters ? "Try a different search." : "Add a deal to start tracking your pipeline by stage."}
-            </EmptyDescription>
-          </EmptyHeader>
-          {canCreate && !hasFilters ? (
-            <EmptyContent>
-              <Button size="sm" onClick={() => setDialog({ open: true, deal: null, stage: "qualify" })}>
-                <Plus data-icon="inline-start" />
-                New deal
-              </Button>
-            </EmptyContent>
+      {params.tab === "overview" && showFilters ? (
+        <DealsFilters
+          key={JSON.stringify([params.owners, params.stages, params.closeFrom, params.closeTo, params.company])}
+          params={params}
+          pipeline={pipeline}
+          members={members}
+          onApply={(changes) => filters.set({ ...changes, filters: "1" })}
+        />
+      ) : null}
+
+      {params.tab === "analytics" ? analytics : null}
+
+      {params.tab === "overview" ? (
+        <>
+          <p className="text-muted-foreground text-sm">
+            <span className="font-mono text-foreground tabular-nums">{formatNumber(total)}</span>{" "}
+            {total === 1 ? "deal" : "deals"}
+            {pipeline ? (
+              <>
+                {" "}
+                · <span className="font-mono text-foreground tabular-nums">{formatMoney(openValue)}</span> open in{" "}
+                {pipeline.name}
+              </>
+            ) : null}
+          </p>
+
+          {total === 0 && !hasFilters && params.view === "table" ? (
+            <Empty className="border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Handshake aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle>Start winning more deals</EmptyTitle>
+                <EmptyDescription>
+                  Create your first deal to track its stage, value, people and activity in one place.
+                </EmptyDescription>
+              </EmptyHeader>
+              {canCreate ? (
+                <EmptyContent>
+                  <Button size="sm" onClick={() => openCreate()}>
+                    <Plus data-icon="inline-start" />
+                    Create deal
+                  </Button>
+                </EmptyContent>
+              ) : null}
+            </Empty>
           ) : null}
-        </Empty>
+
+          {total === 0 && hasFilters && params.view === "table" ? (
+            <Empty className="border">
+              <EmptyHeader>
+                <EmptyTitle>No deals match</EmptyTitle>
+                <EmptyDescription>Try other filters or clear the search.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : null}
+
+          {params.view === "kanban" && pipeline ? (
+            <DealsBoard
+              pipeline={pipeline}
+              deals={deals}
+              totals={totals}
+              canUpdate={canUpdate}
+              canCreate={canCreate}
+              onMove={(deal, stageId) => void move(deal, stageId)}
+              onOpen={(deal) => setOpenDealId(deal.id)}
+              onCreate={(stageId) => openCreate(stageId)}
+            />
+          ) : null}
+
+          {params.view === "table" && total > 0 ? (
+            <DealsTable
+              deals={deals}
+              currentUserId={currentUserId}
+              showPipeline={!pipeline}
+              onOpen={(deal) => setOpenDealId(deal.id)}
+            />
+          ) : null}
+
+          {total > limit ? (
+            <p className="text-muted-foreground text-xs">
+              Showing the {formatNumber(limit)} most recent deals. Totals include all {formatNumber(total)}. Filter to
+              narrow the list.
+            </p>
+          ) : null}
+        </>
       ) : null}
 
-      {total > 0 && view === "board" ? (
-        <section aria-label="Deals by stage" className="-mx-4 overflow-x-auto px-4 pb-2 md:mx-0 md:px-0">
-          <div className="flex w-max gap-3">
-            {DEAL_STAGES.map((stage) => {
-              const stageTotal = totals.find((t) => t.stage === stage);
-              const items = deals.filter((d) => d.stage === stage);
-              return (
-                <div
-                  key={stage}
-                  className="flex w-72 shrink-0 flex-col gap-3 rounded-xl border bg-muted/40 p-3"
-                  data-testid={`stage-${stage}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex flex-col gap-0.5">
-                      <h2 className="font-medium text-sm">{DEAL_STAGE_INFO[stage].name}</h2>
-                      <span className="text-muted-foreground text-xs tabular-nums">
-                        {formatNumber(stageTotal?.count ?? 0)} ·{" "}
-                        <span className="font-mono">{formatMoney(stageTotal?.amount ?? 0, "USD", true)}</span>
-                      </span>
-                    </div>
-                    {canCreate ? (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`New deal in ${DEAL_STAGE_INFO[stage].name}`}
-                        onClick={() => setDialog({ open: true, deal: null, stage })}
-                      >
-                        <Plus />
-                      </Button>
-                    ) : null}
-                  </div>
-                  {items.length ? (
-                    <ul className="flex flex-col gap-2">
-                      {items.map((deal) => (
-                        <DealCard key={deal.id} deal={deal} actions={actions} />
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="rounded-lg border border-dashed p-3 text-center text-muted-foreground text-xs">
-                      No deals in this stage
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      {total > 0 && view === "table" ? (
-        <div className="overflow-hidden rounded-xl border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-4">Deal</TableHead>
-                <TableHead>Stage</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead>Owner</TableHead>
-                <TableHead>Close date</TableHead>
-                <TableHead className="pr-4">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {deals.map((deal) => (
-                <TableRow key={deal.id}>
-                  <TableCell className="max-w-72 pl-4">
-                    <div className="flex min-w-0 flex-col gap-0.5">
-                      <span className="truncate font-medium">{deal.name}</span>
-                      {deal.company || deal.contact ? (
-                        <span className="truncate text-muted-foreground text-xs">
-                          {[deal.company?.name, deal.contact?.name].filter(Boolean).join(" · ")}
-                        </span>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <StagePill stage={deal.stage} />
-                  </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">
-                    {formatMoney(deal.amount, deal.currency)}
-                  </TableCell>
-                  <TableCell className="max-w-40 truncate">
-                    {deal.owner?.id === currentUserId ? "You" : (deal.owner?.name ?? "No owner")}
-                  </TableCell>
-                  <TableCell className="tabular-nums">{formatDate(deal.closeDate)}</TableCell>
-                  <TableCell className="pr-4 text-right">
-                    <DealActions deal={deal} {...actions} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-            <tfoot className="border-t bg-muted/40 text-xs">
-              <tr>
-                <td colSpan={6} className="px-4 py-2 text-muted-foreground">
-                  <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    {totals.map((t) => (
-                      <span key={t.stage} className="tabular-nums">
-                        {t.name}:{" "}
-                        <span className="font-mono text-foreground">{formatMoney(t.amount, "USD", true)}</span> (
-                        {t.count})
-                      </span>
-                    ))}
-                  </div>
-                </td>
-              </tr>
-            </tfoot>
-          </Table>
-        </div>
-      ) : null}
-
-      {total > limit ? (
-        <p className="text-muted-foreground text-xs">
-          Showing the {formatNumber(limit)} most recent deals. Totals include all {formatNumber(total)}. Search to
-          narrow the list.
-        </p>
-      ) : null}
-
-      <DealDialog
-        open={dialog.open}
-        onOpenChange={(open) => setDialog((d) => ({ ...d, open }))}
-        deal={dialog.deal}
+      <DealFormDialog
+        key={`${form.deal?.id ?? "new"}-${form.nonce}`}
+        open={form.open}
+        onOpenChange={(open) => setForm((f) => ({ ...f, open }))}
+        deal={form.deal}
+        pipelines={pipelines}
+        defaultPipelineId={pipeline?.id ?? defaultPipeline.id}
+        defaultStageId={form.stageId}
         members={members}
-        defaultOwnerId={currentUserId}
-        defaultStage={dialog.stage}
+        customFields={customFields}
+        currentUserId={currentUserId}
+        canCreateCompany={can(role, "company:create")}
+        prefill={form.prefill}
       />
-      <ConfirmDialog
-        open={toDelete !== null}
-        onOpenChange={(open) => !open && setToDelete(null)}
-        title="Delete this deal?"
-        description={`"${toDelete?.name ?? ""}" will be removed from the pipeline. This can't be undone.`}
-        confirmLabel="Delete deal"
-        pendingLabel="Deleting…"
-        icon={<Trash2 data-icon="inline-start" />}
-        onConfirm={remove}
+      <DealDrawer
+        deal={openDeal}
+        pipelines={pipelines}
+        canUpdate={canUpdate}
+        canDelete={can(role, "deal:delete")}
+        canNote={can(role, "note:create")}
+        onClose={() => setOpenDealId(null)}
+        onEdit={(deal) => {
+          setOpenDealId(null);
+          setForm((f) => ({ open: true, deal, nonce: f.nonce + 1 }));
+        }}
+        onMove={(deal, stageId) => void move(deal, stageId)}
       />
+      {params.create ? null : <DealsIntroDialog userId={currentUserId} />}
     </div>
   );
 }

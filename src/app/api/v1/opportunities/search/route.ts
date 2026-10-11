@@ -8,16 +8,27 @@ import { dealSearchSchema, searchDeals } from "@/server/services/deals";
 async function search(actor: Actor, input: unknown) {
   const body = dealSearchSchema.parse(input);
   const page = pageFrom(body);
-  const { deals, total, totals } = await searchDeals(actor, body, page);
-  return { opportunities: deals, stage_totals: totals, pagination: pagination(page, total) };
+  const { deals, total, totals, pipelineTotals } = await searchDeals(actor, body, page);
+  return {
+    opportunities: deals,
+    stage_totals: totals,
+    pipeline_stage_totals: pipelineTotals,
+    pagination: pagination(page, total),
+  };
 }
 
 function queryInput(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   const stages = q.getAll("stage");
+  const stageIds = q.getAll("stageIds");
+  const ownerIds = q.getAll("ownerIds");
+  const multi = new Set(["stage", "stageIds", "ownerIds", "open", "mine", "sort_ascending"]);
   return {
-    ...Object.fromEntries([...q.entries()].filter(([k]) => k !== "stage" && k !== "open" && k !== "mine")),
+    ...Object.fromEntries([...q.entries()].filter(([k]) => !multi.has(k))),
     ...(stages.length ? { stage: stages } : {}),
+    ...(stageIds.length ? { stageIds } : {}),
+    ...(ownerIds.length ? { ownerIds } : {}),
+    ...(q.has("sort_ascending") ? { sort_ascending: q.get("sort_ascending") === "true" } : {}),
     ...(q.has("open") ? { open: q.get("open") === "true" } : {}),
     ...(q.has("mine") ? { mine: q.get("mine") === "true" } : {}),
   };
