@@ -18,6 +18,7 @@
     "db:seed": "tsx --tsconfig tsconfig.json scripts/seed.ts",
     "test:api": "playwright test --project=api",
     "test:ui": "playwright test --project=ui-desktop --project=ui-tablet --project=ui-mobile",
+    "test:ui:isolated": "playwright test --config playwright.isolated.config.ts",
     "test": "playwright test",
     "scheduler": "tsx --conditions=react-server scripts/scheduler.ts",
     "domains:recheck": "tsx --conditions=react-server scripts/domains-recheck.ts",
