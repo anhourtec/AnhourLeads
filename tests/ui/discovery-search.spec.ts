@@ -37,6 +37,16 @@ test.describe("find people and companies over the shared database", () => {
       }
       await expect(results.getByRole("button", { name: `Nora ${tag}`, exact: true })).toBeVisible();
       await expect(results.getByRole("button", { name: `Omar ${tag}`, exact: true })).toBeVisible();
+      // The LinkedIn profile Lumen published next to Nora: a plain link in a new tab, none for Omar.
+      const noraLinkedin = page
+        .locator(`tr[data-index-id="${fx.people.nora}"]`)
+        .getByRole("link", { name: `Nora ${tag} on LinkedIn` });
+      await expect(noraLinkedin).toHaveAttribute("href", `https://www.linkedin.com/in/nora-${tag}`);
+      await expect(noraLinkedin).toHaveAttribute("target", "_blank");
+      await expect(noraLinkedin).toHaveAttribute("rel", "noopener noreferrer");
+      await expect(
+        page.locator(`tr[data-index-id="${fx.people.omar}"]`).getByTestId("index-person-linkedin"),
+      ).toHaveCount(0);
       // Emails stay hidden until accessed.
       await expect(page.getByText(`nora@lumen.${tag}.search.test`)).toHaveCount(0);
       await expectNoHorizontalOverflow(page);
@@ -70,6 +80,11 @@ test.describe("find people and companies over the shared database", () => {
       await noraRow.getByRole("button", { name: `Nora ${tag}`, exact: true }).click();
       const personSheet = page.getByRole("dialog", { name: `Nora ${tag}` });
       await expect(personSheet.getByText("Chief Executive Officer").first()).toBeVisible();
+      await expect(personSheet.getByRole("link", { name: "LinkedIn profile" })).toHaveAttribute(
+        "href",
+        `https://www.linkedin.com/in/nora-${tag}`,
+      );
+      await expect(personSheet.getByTestId("index-person-source")).toHaveText("Company website");
       await personSheet.getByRole("button", { name: `Lumen ${tag} Robotics` }).click();
       const companySheet = page.getByRole("dialog", { name: `Company: Lumen ${tag} Robotics` });
       // Accessing Nora's email saved Lumen too (the role may create companies).
@@ -114,9 +129,35 @@ test.describe("find people and companies over the shared database", () => {
       await expectNoHorizontalOverflow(page);
       await page.screenshot({ path: shot("people-viewer-dark", info.project.name) });
 
+      await expect(noraRow.getByRole("link", { name: `Nora ${tag} on LinkedIn` })).toBeVisible();
+
+      // Person sheet: the profile link and where the person was found (a registry for Pia).
+      await page.goto(`/dashboard/people?company=Quarry+${tag}`);
+      await page.waitForLoadState("networkidle");
+      await page
+        .locator(`tr[data-index-id="${fx.people.pia}"]`)
+        .getByRole("button", { name: `Pia ${tag}`, exact: true })
+        .click();
+      const piaSheet = page.getByRole("dialog", { name: `Pia ${tag}` });
+      await expect(piaSheet.getByTestId("index-person-source")).toHaveText("Companies House");
+      await expect(piaSheet.getByRole("link", { name: "LinkedIn profile" })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(piaSheet).toBeHidden();
+      await page.goto(`/dashboard/people?company=Lumen+${tag}`);
+      await page.waitForLoadState("networkidle");
+      await noraRow.getByRole("button", { name: `Nora ${tag}`, exact: true }).click();
+      const noraSheet = page.getByRole("dialog", { name: `Nora ${tag}` });
+      await expect(noraSheet.getByRole("link", { name: "LinkedIn profile" })).toBeVisible();
+      await expect(noraSheet.getByTestId("index-person-source")).toHaveText("Company website");
+      await expectNoHorizontalOverflow(page);
+      await page.screenshot({ path: shot("person-sheet-viewer-dark", info.project.name) });
+      await page.keyboard.press("Escape");
+      await expect(noraSheet).toBeHidden();
+
       await noraRow.getByRole("button", { name: `Lumen ${tag} Robotics` }).click();
       const sheet = page.getByRole("dialog", { name: `Company: Lumen ${tag} Robotics` });
       await expect(sheet.getByRole("list", { name: "People" })).toBeVisible();
+      await expect(sheet.getByRole("link", { name: `Nora ${tag} on LinkedIn` })).toBeVisible();
       await expect(sheet.getByRole("button", { name: /Save/ })).toHaveCount(0);
       await page.keyboard.press("Escape");
 

@@ -134,6 +134,8 @@ export interface PersonInput {
   lastName: string | null;
   title: string | null;
   email: string | null;
+  /** A https://www.linkedin.com/in/<slug> link the page published next to the person; stored, never fetched. */
+  linkedinUrl?: string | null;
 }
 
 /**
@@ -167,6 +169,7 @@ export async function recordPagePeople(
         seniority: seniorityFromTitle(title),
         department: departmentFromTitle(title),
         publishedEmail: p.email,
+        linkedinUrl: p.linkedinUrl ?? null,
         sourceUrl,
         lastSeenAt: now,
       })
@@ -177,6 +180,8 @@ export async function recordPagePeople(
           seniority: sql`coalesce(excluded.seniority, ${schema.indexPerson.seniority})`,
           department: sql`coalesce(excluded.department, ${schema.indexPerson.department})`,
           publishedEmail: sql`coalesce(excluded.published_email, ${schema.indexPerson.publishedEmail})`,
+          // A page that stops linking the profile never erases one found before.
+          linkedinUrl: sql`coalesce(excluded.linkedin_url, ${schema.indexPerson.linkedinUrl})`,
           sourceUrl,
           lastSeenAt: now,
           goneAt: null,

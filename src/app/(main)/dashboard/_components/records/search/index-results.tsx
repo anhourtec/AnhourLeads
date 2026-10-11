@@ -3,7 +3,7 @@
 import Link from "next/link";
 
 import { cn } from "cn";
-import { BookmarkPlus, Check, Loader2, MailSearch } from "lucide-react";
+import { BookmarkPlus, BriefcaseBusiness, Check, Loader2, MailSearch } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,30 @@ export function Provenance({ url, label, at }: { url: string | null; label: stri
         </time>
       ) : null}
     </span>
+  );
+}
+
+/** Only a public profile URL becomes a link; linkedin.com is never fetched, the browser just opens it. */
+export function safeLinkedin(url: string | null | undefined): string | null {
+  return url && /^https:\/\/www\.linkedin\.com\/in\/[^/?#\s]+$/.test(url) ? url : null;
+}
+
+/** Compact LinkedIn icon link next to a person's name (the same icon as saved people use). */
+export function LinkedinIconLink({ url, name }: { url: string | null | undefined; name: string }) {
+  const href = safeLinkedin(url);
+  if (!href) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`${name} on LinkedIn`}
+      title="LinkedIn profile"
+      data-testid="index-person-linkedin"
+      className="shrink-0 rounded-md p-1 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <BriefcaseBusiness className="size-4" aria-hidden="true" />
+    </a>
   );
 }
 
@@ -285,6 +309,7 @@ export function IndexPeopleTable({
                     >
                       {r.name}
                     </button>
+                    <LinkedinIconLink url={r.linkedinUrl} name={r.name} />
                   </span>
                 </th>
                 <td className={cn(cell, "min-w-44 max-w-64")}>

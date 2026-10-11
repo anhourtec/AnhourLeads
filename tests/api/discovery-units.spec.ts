@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-import { extractPeople, jsonLdObjects, plausiblePersonName } from "../../src/server/crawler/extract";
+import {
+  extractPeople,
+  jsonLdObjects,
+  personLinkedin,
+  plausiblePersonName,
+  slugMatchesName,
+} from "../../src/server/crawler/extract";
 import {
   atsApiUrl,
   atsBoardFromApiUrl,
@@ -434,5 +440,80 @@ test.describe("real-web guards", () => {
     expect(countryName("Canada")).toBe("Canada");
     expect(countryName("Usa")).toBe("Usa");
     expect(countryName("")).toBeNull();
+  });
+});
+
+test.describe("LinkedIn profiles published next to people", () => {
+  test("only personal profile links are kept, normalised to https://www.linkedin.com/in/<slug>", () => {
+    expect(personLinkedin("https://uk.linkedin.com/in/ada-lovelace/?trk=public")).toBe(
+      "https://www.linkedin.com/in/ada-lovelace",
+    );
+    expect(personLinkedin("http://linkedin.com/in/grace_hopper")).toBe("https://www.linkedin.com/in/grace_hopper");
+    expect(personLinkedin("https://www.linkedin.com/company/acme")).toBeNull();
+    expect(personLinkedin("https://www.linkedin.com/in/")).toBeNull();
+    // Markup in a slug stays percent-encoded, so it can only ever be an inert link.
+    expect(personLinkedin("https://www.linkedin.com/in/<script>")).toBe("https://www.linkedin.com/in/%3Cscript%3E");
+    expect(personLinkedin("https://www.linkedin.com/in/a")).toBeNull();
+    expect(personLinkedin("https://linkedin.example.com/in/ada")).toBeNull();
+    expect(personLinkedin("javascript:alert(1)")).toBeNull();
+    // A link only: the crawler never queues or fetches it.
+    expect(isDeniedUrl("https://www.linkedin.com/in/ada-lovelace")).toBe(true);
+  });
+
+  test("each card keeps its own profile, and a better source for the same person keeps the link", () => {
+    const html = [
+      "<h1>Our team</h1>",
+      '<div><h3>Ada Lovelace</h3><p>Chief Executive Officer</p><a href="https://uk.linkedin.com/in/ada-lovelace/">in</a></div>',
+      "<div><h3>Alan Turing</h3><p>Senior Software Engineer</p></div>",
+      '<div><h3>Grace Hopper</h3><p>VP Engineering</p><a href="https://www.linkedin.com/company/acme">Acme</a></div>',
+      `<script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org",
+        "@graph": [
+          { "@type": "Person", name: "Ada Lovelace", jobTitle: "Chief Executive Officer" },
+          {
+            "@type": "Person",
+            name: "Linus Torvalds",
+            jobTitle: "Chief Technology Officer",
+            sameAs: ["https://www.linkedin.com/in/linus-t"],
+          },
+        ],
+      })}</script>`,
+    ].join("");
+    const people = extractPeople(html, jsonLdObjects(html), new URL("https://acme.example/team"));
+    const byName = new Map(people.map((p) => [p.name, p.linkedinUrl]));
+    expect(byName.get("Ada Lovelace")).toBe("https://www.linkedin.com/in/ada-lovelace");
+    // The next card's link is never borrowed, and company pages are not profiles.
+    expect(byName.get("Alan Turing")).toBeNull();
+    expect(byName.get("Grace Hopper")).toBeNull();
+    expect(byName.get("Linus Torvalds")).toBe("https://www.linkedin.com/in/linus-t");
+  });
+
+  test("cards with the profile link before the name never hand it to the previous person", () => {
+    const card = (name: string, slug: string | null, title: string) =>
+      `<div class="card">${slug ? `<a href="https://www.linkedin.com/in/${slug}"><img alt=""></a>` : ""}<h3>${name}</h3><p>${title}</p></div>`;
+    const html = [
+      "<h1>Leadership</h1>",
+      card("Jay Kreps", null, "Chief Executive Officer"),
+      card("Jun Rao", "junrao", "Co-Founder"),
+      card("Neha Narkhede", "nehanarkhede", "Chief Technology Officer"),
+      card("Kate Bueker", "erika-fisher-01", "Chief Financial Officer"),
+    ].join("");
+    const people = extractPeople(html, [], new URL("https://example.com/leadership"));
+    const byName = new Map(people.map((p) => [p.name, p.linkedinUrl]));
+    expect(byName.get("Jay Kreps")).toBeNull();
+    expect(byName.get("Jun Rao")).toBe("https://www.linkedin.com/in/junrao");
+    expect(byName.get("Neha Narkhede")).toBe("https://www.linkedin.com/in/nehanarkhede");
+    // A profile that doesn't fit the name is dropped rather than guessed.
+    expect(byName.get("Kate Bueker")).toBeNull();
+  });
+
+  test("a profile slug must fit the name", () => {
+    expect(slugMatchesName("https://www.linkedin.com/in/ada-lovelace-1a2b3c", "Ada Lovelace")).toBe(true);
+    expect(slugMatchesName("https://www.linkedin.com/in/tristanhandy", "Tristan Handy")).toBe(true);
+    expect(slugMatchesName("https://www.linkedin.com/in/jos%C3%A9-garc%C3%ADa", "José García")).toBe(true);
+    expect(slugMatchesName("https://www.linkedin.com/in/li-wei-88", "Li Wei")).toBe(true);
+    expect(slugMatchesName("https://www.linkedin.com/in/stephaniebuscemi", "Ryan Mac Ban")).toBe(false);
+    expect(slugMatchesName("https://www.linkedin.com/in/profilesoftomorrow", "Jaakko Salo")).toBe(false);
+    expect(slugMatchesName("https://www.linkedin.com/in/vanessa-k", "Pieter van Dijk")).toBe(false);
   });
 });
