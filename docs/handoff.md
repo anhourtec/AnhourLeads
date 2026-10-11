@@ -6,17 +6,16 @@ How things work: [architecture.md](./architecture.md). Who can do what: [roles.m
 
 ---
 
-## Current state (2026-10-10)
+## Current state (2026-10-11)
 
-**Branch:** `feat/platform-foundation`, cut from local `main` (21 commits ahead, not pushed). All work is committed in focused conventional commits with no AI attribution.
+**Branch:** `feat/apollo-parity`, cut from local `feat/platform-foundation` (14 commits ahead of it, which is 21 ahead of `main`; nothing pushed). All work is committed in focused conventional commits with no AI attribution. The parity packages were built in parallel, so some intermediate commits may not build on their own; the branch tip does.
 
 **Checks at last commit:**
 
-- `npx biome check .`: 662 files, clean. `npm run typecheck`: clean.
-- `npm run test:api` (fresh reseed): **285 / 285 passed** across 19 spec files: every endpoint × owner / admin / manager / member / viewer against the matrix, API keys per role (revoked → 401), 401 unauthenticated, 422 validation, CSRF (cross-site cookie writes → 403), Globex-vs-Acme isolation (→ 404), real 404s for unknown and out-of-scope pages, sending through Mailpit, crawling the fixture site.
-- `npm run test:ui` (desktop 1440, tablet 834, mobile Pixel 7): **184 passed, 2 skipped by design** (183 on the full run plus 1 flaky test, see open items, that passed on rerun); 13 spec files.
-- Visual QA with Playwright MCP: every product screen at 1440 / 834 / 390, light and dark, as member, viewer and owner, plus the white-label host and platform admin. 316 screenshots in `.playwright-mcp/` (gitignored). Eight issues found and fixed.
-- Production image: `docker build -f deploy/Dockerfile .` succeeds (includes `next build`); the container waits for Postgres and Redis, applies migrations, serves `/api/health` and `/api/health/ready` (ok / ok), the sign-in page and a real sign-in; the scheduler starts its three jobs. `docker compose -f deploy/docker-compose.prod.yml config --quiet` passes in both modes; `nginx -t` passes for `letsencrypt.conf` and `cloudflare.conf`; shellcheck clean on the deploy scripts; `sync-certs.sh` exercised with stubbed `psql` / `certbot`.
+- `npx biome check .`: no errors (about 36 style warnings, mostly nested ternaries). `npm run typecheck`: clean.
+- `npm run test:api` (fresh reseed): **639 / 639 passed** across 64 spec files: every endpoint × owner / admin / manager / member / viewer against the matrix, API keys, 401, 422, CSRF, Globex-vs-Acme isolation, plus engine behaviour (sending through Mailpit, policies, variants, threading, workflows, stage triggers, crawler fleet against fixture sites, removal requests via Mailpit).
+- `npm run test:ui`, run per viewport with `--workers=2` (the all-at-once run was stopped by the OS for low memory): desktop 152 passed, 3 failed, 1 skipped; tablet 153 passed, 1 failed, 2 skipped; mobile 152 passed, 2 failed, 2 skipped. All 6 failures were fixed (4 test-locator or test-artefact issues, 1 real hydration warning on the home checklist, 1 React dev timing message filtered) and the affected specs re-run green at every size; the full three-viewport suite has not been re-run end to end after those fixes.
+- Earlier verification of the foundation (production image, compose config, `nginx -t`, certbot sync) still applies; the new `crawler` compose service passed `docker compose config --quiet` but the worker hasn't run inside a container yet.
 
 **Running locally:**
 
@@ -24,12 +23,13 @@ How things work: [architecture.md](./architecture.md). Who can do what: [roles.m
 docker compose up -d          # Postgres :48432, Redis :48379, Mailpit :48025 / UI http://localhost:48026
 npm install && npm run db:migrate && npm run db:seed
 npm run dev                   # http://localhost:3410 ; white-label host http://acme.localhost:3410
-npm run scheduler             # optional locally: runs the domains, crawl and sequences jobs
+npm run scheduler             # optional: domains, crawl, sequences, workflows, enrichment, discovery jobs
+npm run crawler               # optional: one discovery crawler worker (CRAWLER_* settings in .env)
 ```
 
-Demo accounts (password `demo-password-1234`): `owner@acme.test`, `admin@acme.test`, `manager@acme.test`, `member@acme.test`, `viewer@acme.test` (Acme Outbound, brand "Acme Prospecting" in emerald, host `acme.localhost:3410`), `owner@globex.test` (isolation checks), platform admin `admin@anhourleads.local`. Migrations up to `drizzle/0001_mailbox_smtp_outbound.sql`.
+Test logins are in the gitignored `credential.md` (demo password `demo-password-1234`). Migrations run up to `drizzle/0003_discovery_index.sql`. Run UI tests per viewport with `--workers=2` on a laptop; the full parallel run can exhaust memory.
 
-Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the crawler tests can reach the fixture site on 127.0.0.1:48090. **Never set that in production.**
+Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so crawler tests can reach fixture sites on 127.0.0.1. **Never set that in production.**
 
 ### What AnhourLeads has
 
@@ -45,9 +45,27 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the crawler 
 - **White-label:** brand name, colour (12 named palette colours) and support email per workspace; custom hostnames verified by DNS TXT with the pending → verified → failing lifecycle; the brand follows the hostname; a workspace host never shows "AnhourLeads".
 - **Production:** NGINX (Cloudflare or Let's Encrypt mode) → app → Postgres 17 + Redis 7, certbot syncing certificates for serving hostnames every 15 minutes, scheduler container, container entrypoint with migrations.
 
+- **Apollo parity (2026-10-11):** the shell, navigation, typography (Inter, Hanken Grotesk, Roboto Mono), onboarding, home layouts, settings and every main screen follow the Apollo reference in `docs/reference/apollo-ui.md`; only the colours differ. Search with Total / Net new / Saved, facets, filters modal, natural-language box, saved searches and bulk actions; contact and company pages with notes and activity; custom fields, personas, import wizard; sequences with A/B variants, LinkedIn steps, schedules, rulesets and a policy-aware engine; emails and composer; tasks with a call session; deal pipelines; contact stages and triggers; a workflow engine and builder; data health and enrichment jobs; email setup and health with sending protection; analytics dashboards and reports; usage; an optional AI assistant (presets work without a provider).
+- **Self-hosted data pipeline:** an installation-wide discovery index (companies, people, job postings, news) built from public sources only by a scalable crawler fleet, with platform administration and a public removal-request page; workspaces search it and save records with provenance.
+
 ---
 
 ## Sessions
+
+### 2026-10-11: Apollo parity and the self-hosted data pipeline
+
+**Done:**
+
+- Walked Apollo's app in a signed-in test account with Playwright (home, search, records, lists, import, sequences, emails, tasks, deals, workflows, analytics, enrichment, settings, ⌘K, assistant) and wrote `docs/reference/apollo-ui.md` (page-by-page reference + build plan). Credits used on the test account: one email reveal (it earned more from onboarding tasks; balance 104 at the end). Test artefacts left in that Apollo account: a list "P", a sequence "T" with one unsaved step, a deal pipeline "Pipeline 1", and the anti-spam agreement accepted.
+- Shared foundations first: migration 0002 (parity tables and columns), parity permissions, the record event hub (`recordEvent`), job placeholders; migration 0003 (discovery index).
+- Six parallel packages (shell; search and records; engage; deals, stages and workflows; data, deliverability, analytics and AI; self-hosted data pipeline). A usage limit stopped every agent once; all resumed and finished.
+- Integration: unhid `/dashboard/analytics` in `src/proxy.ts`; wired the discovery job and `npm run crawler`; installation-wide opt-outs now count as suppression in the sending engine; `recordEvent` keeps `last_activity_at` current; `.env.example` gained AI and crawler settings; sidebar Data enrichment gate aligned with its page; deleted the three superseded UI specs (`people`, `companies`, `lists`); fixed six UI failures; Playwright default timeouts raised to 90 s per test and 15 s per assertion for the shared dev server.
+- Docs: roles (new permissions and rules), migrations 0002 and 0003, architecture (parity layer, event hub, workflow engine, sending protection, discovery index), `docs/data-pipeline.md`, deployment guide (crawler service), BRANDING.md and CLAUDE.md (fonts, "only colours differ" rule).
+
+**Verified:** see "Checks at last commit" above.
+
+**Local data / env changes:** test suites reseed the database; `.env` unchanged except as listed in the 2026-10-10 entry (AI and crawler settings default to off when absent).
+
 
 ### 2026-10-10: platform foundation and the full first build
 
@@ -72,14 +90,20 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the crawler 
 - `tests/ui/domains.spec.ts` "an owner adds, sees and removes a local hostname" can fail when desktop, tablet and mobile run it at the same time against Acme's limit of 3 hostnames; it passes on rerun. Fix: give each project its own hostname slot (or raise the limit in the test and restore it).
 - Parallel Playwright runs share `.playwright-mcp/test-results`; concurrent runs delete each other's traces. Only matters when several people or agents run suites at once; use `--output=<dir>` per run.
 
+- The full three-viewport UI suite should be re-run end to end (per viewport, `--workers=2`) to confirm the fixes together; only the affected specs were re-run.
+- React's dev-only `Performance.measure … negative time stamp` message appears intermittently; tests filter it. Radix `Checkbox`/`Switch` hidden inputs can log hydration mismatches in dev; screens that hit it render those controls after hydration or use display-only icons.
+
 **Product gaps (next phases)**
 
-- Engagement: no inbox sync yet (replies are marked with `mark_replied`), no open/click tracking (toggles stored, off by default), plain-text emails only, no threading headers between steps, no A/B variants or branching.
-- AI features from the README (account briefs, grounded personalization, reply classification) are not started.
+- Not built because they need outside services: phone dialer, meeting booking, call recording, website-visitor identification, form builder, CRM sync, Google / Microsoft mailbox OAuth, inbox sync (replies are marked manually), a reply classifier. Their screens are honest "not available yet" states.
+- Data pipeline: settings and removal requests are stored in the Better Auth `verification` table as a stop-gap (proposed `platform_setting` and `index_removal_request` tables in `docs/data-pipeline.md`); people are keyed by company + full name; seed runs are synchronous; Retry-After isn't honoured; DNS-TXT opt-out success path and the worker in a container are unverified.
+- Usage is stored as `usage.lookup` audit rows (a `usage_event` table would be cleaner); notification preferences have no storage (read-only page); saved-search alerts are stored but not sent; stars on saved searches and dashboards are workspace-wide, not per user; `workflow` description and re-enrollment live in `schedule.settings`.
+
+- AI: the assistant, account briefs and grounded drafts work with a configured provider (`AI_PROVIDER`) and fall back to templates; reply classification is not built.
 - Data providers: no third-party enrichment providers or waterfall yet; enrichment is crawler + patterns + verification only.
-- No Google Workspace / Microsoft 365 OAuth mailboxes (SMTP only); no CRM sync, webhooks, SSO, notifications, saved searches with alerts, or custom fields.
+- No SSO.
 - Domains: certificate issuer, error and routing messages aren't stored (`workspace_domain` would need `cert_issuer`, `cert_error`, `routing_message`), so the UI shows generic sentences. Cloudflare for SaaS custom hostnames must be registered by hand. No notifications on hostname status changes (audited only).
-- Tasks: the create dialog has no contact/company picker (API supports it). Workspace rename and delete are API-only. Deals board shows the 100 most recent deals. Removing a suppression doesn't restore a contact's previous stage.
+- Deals board shows one pipeline at a time and the 100 most recent deals. Removing a suppression doesn't restore a contact's previous stage.
 - Lists: member counts are one query per list; batch later. Record pickers in forms load at most 500 companies.
 - Crawler: same-site detection uses a short built-in list of multi-part suffixes, not the full public suffix list. `GET /organizations/enrich` can start a crawl (kept for Apollo parity); prefer the POST form, which has the CSRF check.
 - Loading skeletons exist for every data route but weren't captured visually in dev.
@@ -99,3 +123,4 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the crawler 
 | When (UTC) | Who | What |
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created with the first session's state, checks and open items |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Apollo parity and self-hosted data pipeline session; current state, checks and open items updated |
