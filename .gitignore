@@ -41,6 +41,7 @@ next-env.d.ts
 .env
 deploy/.env
 credentials.md
+credential.md
 
 # test output
 /test-results/

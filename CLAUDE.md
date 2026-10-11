@@ -28,6 +28,8 @@ npm run db:seed             # demo workspaces and one account per role (password
 npm run dev                 # http://localhost:3410 ; white-label host: http://acme.localhost:3410
 ```
 
+**Test logins live in `credential.md`** (repo root, gitignored, never commit it): every seeded account, its role and workspace, and the local Postgres / Redis / Mailpit logins. Read it before signing in to test anything. Whenever you add, remove or change a test account, a seeded role, a password or a local service login (`scripts/seed.ts`, `.env`, `docker-compose.yml`), update `credential.md` in the same change.
+
 Demo accounts: `owner@acme.test`, `admin@acme.test`, `manager@acme.test`, `member@acme.test`, `viewer@acme.test` (workspace Acme Outbound, host `acme.localhost:3410`), `owner@globex.test` (second workspace, for isolation checks), platform admin from `SEED_PLATFORM_ADMIN_*`.
 
 ## Ports: never use common ones
@@ -78,3 +80,4 @@ Anyone who updates this file adds a line here: date (UTC), who, what changed.
 | When (UTC) | Who | What |
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created: working rules, ports, stack, project rules |
+| 2026-10-10 | Nishchayjeet Singh (Nish) | Test logins kept in gitignored `credential.md`; keep it current |
