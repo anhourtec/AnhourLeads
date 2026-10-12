@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { ACME, anonymous, BASE_URL, TENANT_URL } from "../support/session";
+import { ACME, anonymous, BASE_URL, newUiContext, TENANT_URL } from "../support/session";
 import { expectNoHorizontalOverflow, setDarkMode, shot, signedInPage, watchErrors } from "./white-label-ui";
 
 test.describe("branding screen", () => {
@@ -75,7 +75,7 @@ test.describe("branding screen", () => {
   test("the white-label sign-in page shows the workspace brand and never the installation name", async ({
     browser,
   }, info) => {
-    const context = await browser.newContext({ baseURL: TENANT_URL });
+    const context = await newUiContext(browser, { baseURL: TENANT_URL });
     const page = await context.newPage();
     const errors = watchErrors(page);
     try {

@@ -50,9 +50,25 @@ export function apiWithKey(key: string, baseURL = BASE_URL): Promise<APIRequestC
   return request.newContext({ baseURL, extraHTTPHeaders: { "x-api-key": key } });
 }
 
+/**
+ * A browser context for UI tests. Hides the Next.js dev-tools button: its position is a local
+ * preference (it can be dragged to any corner) and it would otherwise cover buttons under test.
+ */
+export async function newUiContext(
+  browser: Browser,
+  options: Parameters<Browser["newContext"]>[0] = {},
+): Promise<BrowserContext> {
+  const context = await browser.newContext(options);
+  await context.addInitScript(() => {
+    const style = document.createElement("style");
+    style.textContent = "nextjs-portal { display: none !important; }";
+    document.addEventListener("DOMContentLoaded", () => document.head.append(style), { once: true });
+  });
+  return context;
+}
+
 /** A browser context signed in as `email` (for UI tests). */
 export async function browserAs(browser: Browser, email: string, baseURL = BASE_URL): Promise<BrowserContext> {
   const api = await apiAs(email, baseURL);
-  const context = await browser.newContext({ baseURL, storageState: await api.storageState() });
-  return context;
+  return newUiContext(browser, { baseURL, storageState: await api.storageState() });
 }

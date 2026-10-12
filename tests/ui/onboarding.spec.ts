@@ -1,7 +1,7 @@
 import { expect as baseExpect, test } from "@playwright/test";
 
 import { uniq } from "../api/admin-helpers";
-import { BASE_URL, PASSWORD } from "../support/session";
+import { BASE_URL, newUiContext, PASSWORD } from "../support/session";
 import { expectNoHorizontalOverflow, watchErrors } from "./admin-ui";
 import { openSidebar, ownErrors, wpaShot } from "./shell-ui";
 
@@ -10,7 +10,7 @@ const expect = baseExpect.configure({ timeout: 20_000 });
 
 test.describe("onboarding", () => {
   test("register → questions → goals → connect email step → skip → home", async ({ browser }, info) => {
-    const context = await browser.newContext({ baseURL: BASE_URL });
+    const context = await newUiContext(browser, { baseURL: BASE_URL });
     const page = await context.newPage();
     const errors = watchErrors(page);
     const email = `${uniq("onboard")}@example.com`.toLowerCase();
@@ -95,7 +95,7 @@ test.describe("onboarding", () => {
   });
 
   test("someone who hasn't finished is sent to onboarding from any app page", async ({ browser }) => {
-    const context = await browser.newContext({ baseURL: BASE_URL });
+    const context = await newUiContext(browser, { baseURL: BASE_URL });
     const page = await context.newPage();
     const errors = watchErrors(page);
     try {

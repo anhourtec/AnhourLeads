@@ -2,7 +2,7 @@ import { expect as baseExpect, type Page, test } from "@playwright/test";
 
 import { createContact, mailpitMailbox, uniq } from "../api/_engage";
 import { addFreshMember, db } from "../api/admin-helpers";
-import { ACME, apiAs, apiAsRole, BASE_URL, GLOBEX_OWNER } from "../support/session";
+import { ACME, apiAs, apiAsRole, BASE_URL, GLOBEX_OWNER, newUiContext } from "../support/session";
 import { expectNoHorizontalOverflow, runId, signedInPage, watchErrors } from "./_engage-ui";
 
 // The shared dev server recompiles while other work is edited; allow for slow responses.
@@ -152,7 +152,7 @@ test.describe("creating sequences", () => {
         [crypto.randomUUID(), fresh.userId],
       );
     }
-    const context = await browser.newContext({ baseURL: BASE_URL, storageState: await fresh.api.storageState() });
+    const context = await newUiContext(browser, { baseURL: BASE_URL, storageState: await fresh.api.storageState() });
     const page = await context.newPage();
     const errors = watchErrors(page);
     try {
