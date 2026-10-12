@@ -7,6 +7,9 @@
 @import "../styles/presets/soft-pop.css";
 @import "../styles/presets/tangerine.css";
 
+/* White-label brand colours: override --primary per workspace (BRANDING.md) */
+@import "../styles/brand.css";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -48,7 +51,7 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-display);
   --font-sans: var(--font-sans);
 }
 
@@ -86,9 +89,9 @@ These serve as the fallback; there is no separate default.css file. */
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
 
-  /* fonts */
-  --font-sans: var(--font-geist);
-  --font-mono: var(--font-geist-mono);
+  /* fonts (resolved on body, where next/font defines the family variables) */
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-roboto-mono);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
 }
@@ -133,12 +136,40 @@ These serve as the fallback; there is no separate default.css file. */
   }
 
   body {
+    /* next/font sets the family variables on body, so the tokens have to resolve here, not on :root. */
+    --font-sans: var(--font-inter);
+    --font-mono: var(--font-roboto-mono), ui-monospace, monospace;
+    --font-display: var(--font-hanken-grotesk), var(--font-sans), system-ui, sans-serif;
     @apply bg-background text-foreground;
     font-family: var(--font-sans), system-ui, sans-serif;
   }
   html {
     @apply font-sans;
   }
+  /* Headings use the display grotesk (BRANDING.md type scale). Weight stays on the element. */
+  h1 {
+    font-family: var(--font-display);
+  }
+}
+
+/* Page title: display font, ~24 px, regular weight (BRANDING.md). */
+@utility page-title {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  line-height: var(--text-2xl--line-height);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+/* Table column headers and small caps labels: mono, uppercase, ~11 px, letter-spaced, muted. */
+@utility table-head-mono {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
 }
 
 @layer utilities {
@@ -232,6 +263,19 @@ These serve as the fallback; there is no separate default.css file. */
   html body:has([data-landing-page]) {
     --font-sans: var(--font-geist);
   }
+}
+
+/*
+ * Every product table's column headers read as mono labels (BRANDING.md). Unlayered so it applies
+ * over the table component's own classes without editing src/components/ui.
+ */
+[data-slot="table-head"] {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
 }
 
 html {

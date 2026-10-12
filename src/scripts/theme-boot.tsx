@@ -7,6 +7,8 @@
  */
 import { PREFERENCE_REGISTRY } from "@/lib/preferences/preferences-config";
 
+import { BootScript } from "./boot-script";
+
 export function ThemeBootScript() {
   const registry = JSON.stringify(PREFERENCE_REGISTRY);
 
@@ -73,6 +75,5 @@ export function ThemeBootScript() {
     })();
   `;
 
-  /* biome-ignore lint/security/noDangerouslySetInnerHtml: required for pre-hydration boot script */
-  return <script dangerouslySetInnerHTML={{ __html: code }} />;
+  return <BootScript code={code} />;
 }

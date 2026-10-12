@@ -35,3 +35,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.playwright-mcp/
+
+# env (only .env.example is committed)
+.env
+deploy/.env
+credentials.md
+credential.md
+
+# test output
+/test-results/
+/playwright-report/

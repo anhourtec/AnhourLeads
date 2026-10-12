@@ -1,0 +1,8 @@
+# Fixture robots.txt for the research crawler tests.
+User-agent: *
+Disallow: /private
+Allow: /private/press-kit.html
+Crawl-delay: 0.1
+
+User-agent: SomeOtherBot
+Disallow: /

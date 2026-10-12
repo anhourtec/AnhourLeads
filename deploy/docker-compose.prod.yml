@@ -1,0 +1,191 @@
+# Production stack: NGINX (HTTPS) → AnhourLeads app → Postgres + Redis, a scheduler for background
+# jobs, plus certbot in letsencrypt mode. See docs/deployment-guide.md and docs/domains-and-ssl.md.
+#
+#   cd deploy
+#   cp ../.env.example .env        # fill in production values (docs/deployment-guide.md)
+#   ./build.sh                     # clean build + start (or: docker compose -f docker-compose.prod.yml up -d --build)
+#
+# Two TLS modes, chosen in deploy/.env:
+#   - Self-hosted Let's Encrypt: NGINX_CONF=letsencrypt, APP_TLS_PROVIDER=nginx, COMPOSE_PROFILES=letsencrypt
+#     (starts the certbot service).
+#   - Behind Cloudflare: NGINX_CONF=cloudflare, APP_TLS_PROVIDER=cloudflare, Origin CA certificate in deploy/certs/.
+#
+# Only NGINX publishes ports (80 and 443: browsers and certificate authorities use nothing else). The app,
+# scheduler, crawler workers, Postgres and Redis are reachable only inside this network. Local development is unchanged
+# (docker-compose.yml at the repo root, `npm run dev` on :3410).
+
+name: anhourleads-prod
+
+x-nginx-volumes: &nginx-volumes
+  - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  - ./nginx/${NGINX_CONF:-letsencrypt}.conf:/etc/nginx/conf.d/anhourleads.conf:ro
+  - ./nginx/snippets:/etc/nginx/snippets:ro
+  # Cloudflare mode: the Origin CA certificate and key (never commit them).
+  - ./certs:/etc/nginx/certs:ro
+  # letsencrypt mode: per-hostname server blocks written by certbot (gitignored).
+  - ./nginx/sites:/etc/nginx/sites
+  - letsencrypt:/etc/letsencrypt
+  - certbot-webroot:/var/www/certbot
+  # The pid file, shared so the certbot container can `nginx -s reload`.
+  - nginx-run:/run
+
+x-app-env: &app-env
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgres://${POSTGRES_USER:-anhour}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-anhourleads}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379/0
+  APP_PROTOCOL: https
+  APP_TRUST_PROXY: "true"
+
+services:
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes: *nginx-volumes
+
+  # letsencrypt mode only (COMPOSE_PROFILES=letsencrypt): certificates for the primary hosts and every
+  # serving workspace hostname every 15 minutes, renewals twice a day, NGINX reloads.
+  certbot:
+    profiles: [letsencrypt]
+    build:
+      context: ./certbot
+    restart: unless-stopped
+    depends_on:
+      nginx:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    # Same PID namespace as nginx, so `nginx -s reload` signals the running master process.
+    pid: "service:nginx"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      ACME_STAGING: ${ACME_STAGING:-false}
+      APP_PRIMARY_HOSTS: ${APP_PRIMARY_HOSTS:?set APP_PRIMARY_HOSTS}
+      CERT_SYNC_INTERVAL: ${CERT_SYNC_INTERVAL:-900}
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:-anhour}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-anhourleads}
+    volumes: *nginx-volumes
+
+  app:
+    image: anhourleads/app:${GIT_SHA:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+    restart: unless-stopped
+    env_file: .env
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Liveness (GET /api/health). wget is BusyBox's, part of the node:22-alpine base image.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3410/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 5
+
+  # Background jobs (src/server/jobs/registry.ts: hostname re-checks, crawling, sequences). Same image
+  # as the app; replaces a host crontab. Run exactly one.
+  scheduler:
+    image: anhourleads/app:${GIT_SHA:-latest}
+    restart: unless-stopped
+    command: ["npm", "run", "--silent", "scheduler"]
+    env_file: .env
+    environment: *app-env
+    depends_on:
+      # The app container applies the migrations; jobs start once it's healthy.
+      app:
+        condition: service_healthy
+    # Healthy while the heartbeat file is younger than 2 minutes.
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/scheduler-heartbeat -mmin -2 | grep -q . || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # Crawler fleet for the installation-wide discovery index (docs/data-pipeline.md). Same image as the
+  # app; public pages only, robots.txt obeyed, one request at a time per host. Any number of replicas
+  # can run (URLs are claimed with FOR UPDATE SKIP LOCKED):
+  #   docker compose -f docker-compose.prod.yml up -d --scale crawler=3
+  # No ports are published. Set CRAWLER_REPLICAS=0 (or stop the service) to run without the index.
+  crawler:
+    image: anhourleads/app:${GIT_SHA:-latest}
+    restart: unless-stopped
+    command: ["node_modules/.bin/tsx", "--conditions=react-server", "scripts/crawler-worker.ts"]
+    env_file: .env
+    environment:
+      <<: *app-env
+      CRAWLER_USER_AGENT: ${CRAWLER_USER_AGENT:-AnhourLeadsBot/0.1}
+      CRAWLER_CONTACT_URL: ${CRAWLER_CONTACT_URL:-}
+      CRAWLER_CONCURRENCY: ${CRAWLER_CONCURRENCY:-4}
+      CRAWLER_MAX_PAGES_PER_HOST: ${CRAWLER_MAX_PAGES_PER_HOST:-25}
+      CRAWLER_MIN_DELAY_MS: ${CRAWLER_MIN_DELAY_MS:-2000}
+      CRAWLER_HOST_ERROR_LIMIT: ${CRAWLER_HOST_ERROR_LIMIT:-8}
+      CRAWLER_MAX_ATTEMPTS: ${CRAWLER_MAX_ATTEMPTS:-5}
+      CRAWLER_HEARTBEAT_FILE: /tmp/crawler-heartbeat
+      # Production never crawls private addresses (SSRF guard).
+      CRAWLER_ALLOW_PRIVATE_HOSTS: "false"
+    depends_on:
+      # The app container applies the migrations; workers start once it's healthy.
+      app:
+        condition: service_healthy
+    deploy:
+      replicas: ${CRAWLER_REPLICAS:-1}
+    stop_grace_period: 40s
+    # Healthy while the heartbeat file (touched every 15 s) is younger than 2 minutes.
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/crawler-heartbeat -mmin -2 | grep -q . || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-anhour}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-anhourleads}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-anhour} -d ${POSTGRES_DB:-anhourleads}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  letsencrypt:
+  certbot-webroot:
+  nginx-run:
+  postgres-data:
+  redis-data:
