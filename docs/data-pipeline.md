@@ -275,6 +275,6 @@ Screen: **Platform → Data pipeline** (`/dashboard/platform/data`): Overview, S
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Created: architecture, sources and licences, boundaries, politeness, opt-outs, scaling, retention, index API |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Filling the index locally (dev `crawler` compose profile), test resets keep the index, real-web fixes (Wikidata query, page and job-board caps, moved domains, people rules, names, countries, locales), honest coverage |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Official registries: Companies House and SEC EDGAR seed sources (domain resolution, officers, politeness, stats, config) |
+| 2026-10-11 | Anhourtec | Created: architecture, sources and licences, boundaries, politeness, opt-outs, scaling, retention, index API |
+| 2026-10-11 | Anhourtec | Filling the index locally (dev `crawler` compose profile), test resets keep the index, real-web fixes (Wikidata query, page and job-board caps, moved domains, people rules, names, countries, locales), honest coverage |
+| 2026-10-11 | Anhourtec | Official registries: Companies House and SEC EDGAR seed sources (domain resolution, officers, politeness, stats, config) |

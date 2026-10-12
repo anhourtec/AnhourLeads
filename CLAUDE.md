@@ -71,7 +71,7 @@ New local services get a 4xxxx port bound to 127.0.0.1, overridable via `.env`, 
 - **Secrets:** never logged (the logger redacts), never returned after creation (API keys are shown once, stored as SHA-256), never put in audit metadata.
 - **Logging:** server code uses `log` from `src/server/log.ts`, never `console.*` (scripts may print).
 - **Migrations:** change `src/server/db/schema.ts`, then `npm run db:generate -- --name <what>` and `npm run db:migrate`. Never edit an applied migration. Log it in `docs/migration.md`.
-- **Template leftovers:** the admin template's demo screens are kept for reference but return 404 (`src/proxy.ts`). Don't build on them and don't delete them without asking.
+- **No template leftovers:** the admin template's demo screens, landing page, SEO files and branding were removed (2026-10-11). Users only ever see AnhourLeads screens; don't bring template screens back.
 
 ---
 
@@ -81,8 +81,9 @@ Anyone who updates this file adds a line here: date (UTC), who, what changed.
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Created: working rules, ports, stack, project rules |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Test logins kept in gitignored `credential.md`; keep it current |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Rule 9: fonts follow BRANDING.md (Inter, Hanken Grotesk, Roboto Mono) |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Isolated UI harness (port 43410) in rule 7 and the ports table |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Test fixture server ports (48090, 48091, 48094) |
+| 2026-10-10 | Anhourtec | Created: working rules, ports, stack, project rules |
+| 2026-10-10 | Anhourtec | Test logins kept in gitignored `credential.md`; keep it current |
+| 2026-10-11 | Anhourtec | Rule 9: fonts follow BRANDING.md (Inter, Hanken Grotesk, Roboto Mono) |
+| 2026-10-11 | Anhourtec | Isolated UI harness (port 43410) in rule 7 and the ports table |
+| 2026-10-11 | Anhourtec | Test fixture server ports (48090, 48091, 48094) |
+| 2026-10-11 | Anhourtec | Admin-template screens removed; project rule updated |

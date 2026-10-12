@@ -216,4 +216,4 @@ NGINX ignores any client `X-Request-Id`, sends its own `$request_id` to the app 
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Created: lifecycle, DNS records, providers, NGINX + certbot, Cloudflare option, troubleshooting, env vars |
+| 2026-10-10 | Anhourtec | Created: lifecycle, DNS records, providers, NGINX + certbot, Cloudflare option, troubleshooting, env vars |

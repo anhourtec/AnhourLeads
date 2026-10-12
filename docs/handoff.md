@@ -69,6 +69,8 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 - **Browser extension** (`extension/`, see [browser-extension.md](./browser-extension.md)): saves the one person on the page the user is looking at into their workspace after review, with a workspace API key. Runs only on a click; no content scripts, LinkedIn API calls or site cookies.
 - Chair titles now count as C-suite seniority (43 stored people reclassified).
 
+**Also (2026-10-11, late):** the three feature branches were merged into local `main`; the admin template was removed (demo screens, landing page, sitemap, Open Graph images, favicon, and a `vercel.json` that redirected every visitor to the template's demo site); new favicon (`src/app/icon.svg`) and a `robots.ts` that keeps the private app out of search engines; unused template packages dropped; docs, LICENSE and the crawler user agent credit Anhourtec (https://anhourtec.com). Full API 707 / 707; full UI desktop 170, tablet 169 (1 skipped), mobile 166 with 3 intermittent sequence-page failures that pass on rerun.
+
 **Result:** the shared data went from 573 companies / 442 people to 799 companies / 2,500 people.
 
 ### 2026-10-11 (evening): finding new people, and a real crawl
@@ -126,6 +128,8 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 **Flaky / test infrastructure**
 
 - `tests/ui/domains.spec.ts` "an owner adds, sees and removes a local hostname" can fail when desktop, tablet and mobile run it at the same time against Acme's limit of 3 hostnames; it passes on rerun. Fix: give each project its own hostname slot (or raise the limit in the test and restore it).
+- Sequence pages on mobile (`sequences-editor`, `sequences-parity`) intermittently find two copies of the page (one hidden), failing strict locators; they pass on rerun. Likely Next keeping the previous route mounted during navigation; scope those locators to the visible copy.
+- UI tests hide the Next.js dev-tools button (`newUiContext` in `tests/support/session.ts`): its position is a local preference in `.next/dev/cache/next-devtools-config.json` and, moved to the bottom-right, it covered sheet buttons.
 - Playwright's global setup reseeds workspace data unless `TEST_SKIP_SEED=true`; concurrent runs by several agents reset each other's data.
 - Parallel Playwright runs share `.playwright-mcp/test-results`; concurrent runs delete each other's traces. Only matters when several people or agents run suites at once; use `--output=<dir>` per run.
 
@@ -153,7 +157,7 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 - API paths mirror Apollo's resource names; bodies are camelCase; pagination follows Apollo's envelope.
 - One Next.js app for UI and API; business logic in `src/server/services`; Postgres as the only source of truth, Redis as cache/coordination only.
 - Better Auth instance per hostname for white-label hosts.
-- Admin-template demo screens kept but unreachable (404 via `src/proxy.ts`); the template's `dashboard/tasks` was removed because the product owns that route.
+- Admin-template demo screens, landing page, sitemap, Open Graph images, favicon and the Vercel redirect to the template's demo site were removed on 2026-10-11; only AnhourLeads screens remain. `src/components/calendar/` (unused) stays because AGENTS.md protects it.
 - `BRANDING.md` is upper-case to sit beside `CLAUDE.md` and `README.md`.
 
 ---
@@ -162,7 +166,7 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Created with the first session's state, checks and open items |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Discovery search tabs, real crawl, crawler containers, scheduler fix |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Registries, LinkedIn links, data providers, browser extension, full-width layout |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Apollo parity and self-hosted data pipeline session; current state, checks and open items updated |
+| 2026-10-10 | Anhourtec | Created with the first session's state, checks and open items |
+| 2026-10-11 | Anhourtec | Discovery search tabs, real crawl, crawler containers, scheduler fix |
+| 2026-10-11 | Anhourtec | Registries, LinkedIn links, data providers, browser extension, full-width layout |
+| 2026-10-11 | Anhourtec | Apollo parity and self-hosted data pipeline session; current state, checks and open items updated |

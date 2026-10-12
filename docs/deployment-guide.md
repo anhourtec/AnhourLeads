@@ -226,5 +226,5 @@ Never in production: `CRAWLER_ALLOW_PRIVATE_HOSTS=true`, `APP_TLS_PROVIDER=none`
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Created: single-server Docker deployment from server set-up to first sign-in |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Crawler fleet service for the discovery index: scaling, health, identity, variables |
+| 2026-10-10 | Anhourtec | Created: single-server Docker deployment from server set-up to first sign-in |
+| 2026-10-11 | Anhourtec | Crawler fleet service for the discovery index: scaling, health, identity, variables |

@@ -131,6 +131,6 @@ Display weight is 400 for page titles and 500 for card titles; never bold 700 fo
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Created: fonts, colour, type scale, layout, components, copy, white-label rules |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Reference parity rule (only colours differ); Inter / Hanken Grotesk / Roboto Mono; `page-title` and mono table headers; sidebar, top bar, settings shell and first-run layout |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Scrollbars show only while scrolling |
+| 2026-10-10 | Anhourtec | Created: fonts, colour, type scale, layout, components, copy, white-label rules |
+| 2026-10-11 | Anhourtec | Reference parity rule (only colours differ); Inter / Hanken Grotesk / Roboto Mono; `page-title` and mono table headers; sidebar, top bar, settings shell and first-run layout |
+| 2026-10-11 | Anhourtec | Scrollbars show only while scrolling |

@@ -1,127 +1,56 @@
-# Contributing to Studio Admin
+# Contributing to AnhourLeads
 
-Thanks for showing interest in improving **Studio Admin** (repo: `next-shadcn-admin-dashboard`).  
-This guide will help you set up your environment and understand how to contribute.
+AnhourLeads, the open-source, self-hosted alternative to Apollo.io, is built and maintained by [Anhourtec](https://anhourtec.com). Thanks for helping improve it. This guide covers setup and the rules every change follows. The full working rules are in [CLAUDE.md](./CLAUDE.md); read it and [docs/handoff.md](./docs/handoff.md) before starting.
 
----
+## Set up
 
-## Overview
+```bash
+git clone <repository-url> AnhourLeads
+cd AnhourLeads
+cp .env.example .env        # set BETTER_AUTH_SECRET (openssl rand -base64 48)
+docker compose up -d        # Postgres :48432, Redis :48379, Mailpit :48025 (UI http://localhost:48026)
+npm install
+npm run db:migrate
+npm run db:seed             # demo workspaces, one account per role (password demo-password-1234)
+npm run dev                 # http://localhost:3410
+```
 
-This project is built with **Next.js 16**, **TypeScript**, **Tailwind CSS v4**, and **Shadcn UI**.  
-The goal is to keep the codebase modular, scalable, and easy to extend.
+Optional: `docker compose --profile crawler up -d --build` runs the crawler and scheduler.
 
----
-
-## Project Layout
-
-We use a **colocation-based file system**. Each feature keeps its own pages, components, and logic.
+## Project layout
 
 ```
 src
-├── app               # Next.js routes (App Router)
-│   ├── (auth)        # Auth layouts & screens
-│   ├── (main)        # Main dashboard routes
-│   │   └── (dashboard)
-│   │       ├── crm
-│   │       ├── finance
-│   │       ├── default
-│   │       └── ...
-│   └── layout.tsx
-├── components        # Shared UI components
-├── hooks             # Reusable hooks
-├── lib               # Config & utilities
-├── styles            # Tailwind / theme setup
-└── types             # TypeScript definitions
+├── app
+│   ├── (main)/auth          # sign in, sign up, password reset
+│   ├── (main)/dashboard     # every product screen; screen-only code in <screen>/_components
+│   ├── (main)/onboarding    # first-run flow
+│   ├── api                  # /api/v1 (Apollo-style resources), auth, health, domains
+│   ├── privacy              # public removal-request page
+│   └── t, u                 # email tracking and one-click unsubscribe
+├── components               # shared components (ui/ is shadcn, don't edit)
+├── lib                      # client-safe helpers, RBAC permissions, search filters
+├── navigation               # sidebar and settings navigation
+├── server                   # auth, db (drizzle), services, crawler, discovery, providers
+└── styles                   # theme and brand tokens
+extension/                   # browser extension (save one person from the current page)
+scripts/                     # seed, scheduler, crawler worker, maintenance
+tests/                       # Playwright: api/, ui/, isolated/
 ```
 
-If you’d like a more detailed example of this setup, check out the [Next Colocation Template](https://github.com/arhamkhnz/next-colocation-template), where the full structure is explained with examples.
+How the pieces fit: [docs/architecture.md](./docs/architecture.md). Who can do what: [docs/roles.md](./docs/roles.md). Design rules: [BRANDING.md](./BRANDING.md).
 
----
+## Making a change
 
-## Getting Started
+1. Branch from your current local branch: `git checkout -b <type>/<topic>`. Never commit straight to `main`.
+2. Keep each feature workspace-scoped and role-gated: add the permission to `src/lib/rbac/permissions.ts`, enforce it in the route and the service, hide the UI with the same permission, and update `docs/roles.md`.
+3. Test it:
+   - `npm run test:api`: every endpoint for all five roles, 401, API keys, cross-workspace 404, 422 and CSRF.
+   - `npm run test:ui`: every changed screen at desktop, tablet and mobile, light and dark.
+   - `npm run typecheck` and `npx biome check <files>`.
+4. Update the docs in the same change (`docs/handoff.md`, `docs/architecture.md`, `docs/migration.md` for schema changes).
+5. Commit with conventional messages (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`), one concern per commit, then open a pull request with screenshots for visual changes (include mobile and dark mode).
 
-### Fork and Clone the Repository
+## Reporting issues
 
-1. Fork the Repository
-   
-   Click [here](https://github.com/arhamkhnz/next-shadcn-admin-dashboard/fork) to fork the repository.
-
-2. Clone the Repository  
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/next-shadcn-admin-dashboard.git
-   ```
-   
-3. Navigate into the Project  
-   ```bash
-   cd next-shadcn-admin-dashboard
-   ```
-
-4. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-5. **Run the dev server**
-   ```bash
-   npm run dev
-   ```
-   App will be available at [http://localhost:3000](http://localhost:3000).
-
----
-
-## Contribution Flow
-
-- Always create a new branch before working on changes:
-  ```bash
-  git checkout -b feature/my-update
-  ```
-
-- Use clear commit messages:
-  ```bash
-  git commit -m "feat: add finance dashboard screen"
-  ```
-
-- Open a Pull Request once ready.
-- If your change adds a new UI screen or component, include a screenshot in your PR description.
-
----
-
-## Where to Contribute
-
-- **External Pages**: Landing pages or other non-dashboard routes → `src/app/(external)/`  
-- **Auth Screens**: Login, register, and authentication layouts → `src/app/(main)/auth/`  
-- **Dashboard Screens**: Feature dashboards like CRM, Finance, Analytics → `src/app/(main)/dashboard/`
-- **Components**: Reusable UI goes in `src/components/`  
-- **Hooks**: Custom logic goes in `src/hooks/`  
-- **Themes**: New presets under `src/styles/presets/`  
-
----
-
-## Guidelines
-
-- Prefer **TypeScript types** over `any`
-- Husky pre-commit hooks are enabled - linting and formatting run automatically when you commit, and if there are errors the commit will be blocked until they are fixed. 
-- Follow **Shadcn UI** style & Tailwind v4 conventions
-- Keep accessibility in mind (ARIA, keyboard nav)
-- Use clear commit messages with conventional prefixes (`feat:`, `fix:`, `chore:`, etc.)
-- Avoid unnecessary dependencies — prefer existing utilities where possible
-
----
-
-## Submitting PRs
-
-- Open a Pull Request once your changes are ready.  
-- Ensure your branch is up to date with `main` before submitting.  
-- Reference any related issue in your PR for context.
-
----
-
-## Questions & Support
-
-- Report bugs, suggestions, or issues via [GitHub Issues](https://github.com/arhamkhnz/next-shadcn-admin-dashboard/issues)
-
----
-
-Your contributions keep this project growing. 🚀
-
-**Happy Vibe Coding!**
+Open an issue in the project's repository with steps to reproduce, what you expected and what happened, or contact Anhourtec at https://anhourtec.com.

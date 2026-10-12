@@ -66,7 +66,7 @@ tests/
 └── fixtures/site/               static website the crawler tests crawl
 ```
 
-The admin template this project started from left demo screens under `src/app/(main)/dashboard/*` and `(external)/`. They are kept for reference but return 404 (`TEMPLATE_ROUTES` in `src/proxy.ts`).
+The admin template this project started from has been removed (demo screens, landing page, SEO files, favicon); only AnhourLeads screens remain. `robots.ts` keeps search engines out of everything except `/privacy/`.
 
 ## Request flow
 
@@ -255,7 +255,7 @@ The screens follow the Apollo reference in [reference/apollo-ui.md](./reference/
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Created: system overview, layout, request flow, API, backend modules, data model, tenancy, engine, frontend, jobs, security, testing |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Apollo-parity layer, event hub, workflow engine, sending protection, discovery index |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Find people / Find companies: Total and Net new search the discovery index, Saved shows workspace records |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Official registries, LinkedIn links on index people, bring-your-own data providers, browser extension |
+| 2026-10-10 | Anhourtec | Created: system overview, layout, request flow, API, backend modules, data model, tenancy, engine, frontend, jobs, security, testing |
+| 2026-10-11 | Anhourtec | Apollo-parity layer, event hub, workflow engine, sending protection, discovery index |
+| 2026-10-11 | Anhourtec | Find people / Find companies: Total and Net new search the discovery index, Saved shows workspace records |
+| 2026-10-11 | Anhourtec | Official registries, LinkedIn links on index people, bring-your-own data providers, browser extension |
