@@ -109,6 +109,8 @@ export const PERMISSIONS = [
   "deliverability:manage",
   "ai:use",
   "aicontext:manage",
+  // Bring-your-own data providers (workspace's own API keys)
+  "provider:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -190,6 +192,7 @@ const ADMIN: Permission[] = [
   "customfield:manage",
   "deliverability:manage",
   "aicontext:manage",
+  "provider:manage",
 ];
 
 const OWNER: Permission[] = [...ADMIN, "workspace:delete"];

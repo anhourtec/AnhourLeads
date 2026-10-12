@@ -17,13 +17,22 @@ import {
 import { smtpProbeEnabled, type VerificationResult, verifyEmail } from "@/server/email/verify";
 import { checkSyntax } from "@/server/email/verify-rules";
 import { HttpError, notFound } from "@/server/http/errors";
+import type { PersonQuery, ProviderId } from "@/server/providers";
 
+import {
+  lookupCompanyWithProviders,
+  lookupPersonWithProviders,
+  type PersonField,
+  type ProviderPersonHit,
+} from "./data-providers";
 import {
   companyByDomain,
   companyById,
   companyByName,
   contactById,
   costSummary,
+  type FieldOutcome,
+  type FieldProposal,
   type Lookup,
   planFieldUpdates,
   provenanceFor,
@@ -224,6 +233,151 @@ function guessConfidence(confirmed: boolean, patternConfidence: number | null): 
   return 0.3;
 }
 
+/* -------------------------- Workspace data providers ---------------------- */
+
+/** Confidence given to a provider's value: below a person's entry (1.0), above a plain guess. */
+const PROVIDER_CONFIDENCE = 0.7;
+const PERSON_DETAIL_FIELDS = ["title", "seniority", "phone", "linkedinUrl", "city", "state", "country"] as const;
+const COMPANY_PROVIDER_FIELDS = [
+  "industry",
+  "employeeCount",
+  "foundedYear",
+  "linkedinUrl",
+  "country",
+  "state",
+  "city",
+  "description",
+  "phone",
+] as const;
+
+const providerSource = (provider: ProviderId) => `provider:${provider}`;
+
+function isBlank(value: unknown): boolean {
+  return value === null || value === undefined || value === "";
+}
+
+/** Enough to identify a person at a provider: an email, a LinkedIn URL, or a name with a company. */
+function identifiable(q: PersonQuery): boolean {
+  const has = (v: string | null | undefined) => typeof v === "string" && v.length > 0;
+  const named = (has(q.firstName) && has(q.lastName)) || has(q.name);
+  return has(q.email) || has(q.linkedinUrl) || (named && (has(q.domain) || has(q.companyName)));
+}
+
+/** Contact detail proposals from provider answers: only for fields the contact doesn't have yet. */
+function detailProposals(contact: ContactRow, hits: ProviderPersonHit[]): FieldProposal[] {
+  const proposals: FieldProposal[] = [];
+  for (const field of PERSON_DETAIL_FIELDS) {
+    if (!isBlank(contact[field])) continue;
+    const hit = hits.find((h) => h.result[field] !== null);
+    if (!hit) continue;
+    proposals.push({
+      field,
+      value: hit.result[field],
+      source: providerSource(hit.provider),
+      confidence: PROVIDER_CONFIDENCE,
+    });
+  }
+  return proposals;
+}
+
+function missingDetails(contact: ContactRow | null): PersonField[] {
+  return contact ? PERSON_DETAIL_FIELDS.filter((f) => isBlank(contact[f])) : [];
+}
+
+/**
+ * Fill a contact's empty detail fields (title, seniority, phone, LinkedIn, location) from the
+ * workspace's enabled data providers. Never overwrites a value; skips do-not-contact people.
+ * Used by enrichment jobs for contacts that already have an address.
+ */
+export async function fillContactFromProviders(
+  actor: Actor,
+  contact: ContactRow,
+): Promise<{ fields: string[]; providers: ProviderId[] }> {
+  if (!can(actor.role, "enrich:run") || !can(actor.role, "contact:update")) return { fields: [], providers: [] };
+  const missing = missingDetails(contact);
+  if (!missing.length) return { fields: [], providers: [] };
+  const company = contact.companyId ? await companyById(actor, contact.companyId) : null;
+  const domain = company?.domain ? (domainFromInput(company.domain)?.split(":")[0] ?? null) : null;
+  const query: PersonQuery = {
+    firstName: contact.firstName,
+    lastName: contact.lastName,
+    domain,
+    companyName: company?.name ?? null,
+    email: contact.email,
+    linkedinUrl: contact.linkedinUrl,
+  };
+  if (!identifiable(query)) return { fields: [], providers: [] };
+  const suppressed = await suppressionChecker(actor.organizationId, [
+    ...(contact.email ? [contact.email] : []),
+    ...(domain ? [domain] : []),
+  ]);
+  if ((contact.email && suppressed(contact.email)) || (domain && suppressed(domain))) {
+    return { fields: [], providers: [] };
+  }
+  const { hits, called } = await lookupPersonWithProviders(actor.organizationId, query, missing);
+  if (called.length) {
+    await recordLookups(
+      actor,
+      called.map(() => ({ type: "provider_lookup" as const, cached: false })),
+    );
+  }
+  const plan = await planFieldUpdates(
+    actor.organizationId,
+    "contact",
+    contact.id,
+    contact,
+    detailProposals(contact, hits),
+  );
+  if (!Object.keys(plan.updates).length) return { fields: [], providers: called };
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(schema.contact)
+      .set({ ...(plan.updates as Partial<ContactRow>), lastEnrichedAt: now })
+      .where(and(eq(schema.contact.id, contact.id), eq(schema.contact.organizationId, actor.organizationId)));
+    if (plan.provenance.length) await tx.insert(schema.fieldProvenance).values(plan.provenance);
+  });
+  return { fields: Object.keys(plan.updates), providers: called };
+}
+
+/** Fill a company's empty fields from the workspace's providers (PDL, then Apollo). */
+async function fillCompanyFromProviders(actor: Actor, company: CompanyRow, domain: string): Promise<FieldOutcome[]> {
+  if (!can(actor.role, "enrich:run") || !can(actor.role, "company:update")) return [];
+  const missing = COMPANY_PROVIDER_FIELDS.filter((f) => isBlank(company[f]));
+  if (!missing.length) return [];
+  const suppressed = await suppressionChecker(actor.organizationId, [domain]);
+  if (suppressed(domain)) return [];
+  const { hits, called } = await lookupCompanyWithProviders(actor.organizationId, domain, missing);
+  if (called.length) {
+    await recordLookups(
+      actor,
+      called.map(() => ({ type: "provider_lookup" as const, cached: false })),
+    );
+  }
+  const proposals: FieldProposal[] = [];
+  for (const field of missing) {
+    const hit = hits.find((h) => h.result[field] !== null);
+    if (!hit) continue;
+    proposals.push({
+      field,
+      value: hit.result[field],
+      source: providerSource(hit.provider),
+      confidence: PROVIDER_CONFIDENCE,
+    });
+  }
+  const plan = await planFieldUpdates(actor.organizationId, "company", company.id, company, proposals);
+  if (!Object.keys(plan.updates).length) return plan.outcomes;
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(schema.company)
+      .set({ ...(plan.updates as Partial<CompanyRow>), lastEnrichedAt: now })
+      .where(and(eq(schema.company.id, company.id), eq(schema.company.organizationId, actor.organizationId)));
+    if (plan.provenance.length) await tx.insert(schema.fieldProvenance).values(plan.provenance);
+  });
+  return plan.outcomes;
+}
+
 function organizationRef(
   company: CompanyRow | null,
   domain: string | null,
@@ -290,7 +444,7 @@ export async function matchPerson(actor: Actor, input: PersonMatchInput) {
   const domainSuppressed = domain ? suppressed(domain) : false;
 
   let email: string | null = null;
-  let emailSource: "input" | "contact" | "pattern" | null = null;
+  let emailSource: "input" | "contact" | "pattern" | "provider" | null = null;
   let emailConfidence: number | null = null;
   let candidates: string[] = [];
   let verification: VerificationResult | null = null;
@@ -330,14 +484,66 @@ export async function matchPerson(actor: Actor, input: PersonMatchInput) {
     lookups.push({ type: "email_verification", target: verification.email, cached: verification.cached, cost: 0 });
   }
 
+  // The workspace's own data providers fill what the self-hosted steps left: a missing or unconfirmed
+  // address, and (for a saved contact) empty detail fields. Never for do-not-contact people.
+  let emailProvider: ProviderId | null = null;
+  let providerEmailStatus: ContactRow["emailStatus"] | null = null;
+  let providerHits: ProviderPersonHit[] = [];
+  let providersCalled: ProviderId[] = [];
+  const blocked = domainSuppressed || Boolean(givenEmail && suppressed(givenEmail));
+  const writable = Boolean(contact && can(actor.role, "contact:update"));
+  if (can(actor.role, "enrich:run") && !blocked) {
+    const needEmail = !email || (emailSource === "pattern" && verification?.status !== "valid");
+    const missing: PersonField[] = [
+      ...(needEmail ? (["email"] as const) : []),
+      ...(writable ? missingDetails(contact) : []),
+    ];
+    const query: PersonQuery = {
+      firstName,
+      lastName,
+      name: input.name ?? null,
+      domain,
+      companyName: company?.name ?? input.organizationName ?? null,
+      email: givenEmail,
+      linkedinUrl: contact?.linkedinUrl ?? null,
+    };
+    if (missing.length && identifiable(query)) {
+      const answer = await lookupPersonWithProviders(actor.organizationId, query, missing);
+      providerHits = answer.hits;
+      providersCalled = answer.called;
+      for (const provider of answer.called)
+        lookups.push({ type: "provider_lookup", target: provider, cached: false, cost: 0 });
+      const hit = needEmail ? answer.hits.find((h) => h.result.email && !suppressed(h.result.email)) : undefined;
+      if (hit?.result.email) {
+        email = hit.result.email;
+        emailSource = "provider";
+        emailProvider = hit.provider;
+        providerEmailStatus = hit.result.emailStatus;
+        emailConfidence =
+          hit.result.emailConfidence ?? (hit.result.emailStatus === "valid" ? 0.9 : PROVIDER_CONFIDENCE);
+        verification = null;
+        if (!providerEmailStatus && input.verify) {
+          verification = await verifyEmail(email, { organizationId: actor.organizationId });
+          lookups.push({ type: "email_verification", target: email, cached: verification.cached, cost: 0 });
+        }
+      }
+    }
+  }
+
   // Save to the contact when one was given or matched and the caller may edit contacts.
   let saved = false;
-  if (contact && can(actor.role, "contact:update") && email) {
+  const details = contact && writable ? detailProposals(contact, providerHits) : [];
+  if (contact && writable && (email || details.length)) {
     const target = contact;
     const updates: Partial<ContactRow> = {};
     const provenance: Array<typeof schema.fieldProvenance.$inferInsert> = [];
     const now = new Date();
-    if (!contact.email && emailSource === "pattern") {
+    if (details.length) {
+      const plan = await planFieldUpdates(actor.organizationId, "contact", contact.id, contact, details);
+      Object.assign(updates, plan.updates as Partial<ContactRow>);
+      provenance.push(...plan.provenance);
+    }
+    if (email && !contact.email && (emailSource === "pattern" || emailSource === "provider")) {
       const taken = await findContact(actor, email, null, null, null);
       if (!taken) {
         updates.email = email;
@@ -347,10 +553,24 @@ export async function matchPerson(actor: Actor, input: PersonMatchInput) {
           entityId: contact.id,
           field: "email",
           value: email,
-          source: "pattern",
+          source: emailProvider ? providerSource(emailProvider) : "pattern",
           confidence: emailConfidence ?? 0.3,
           retrievedAt: now,
         });
+        if (emailProvider && providerEmailStatus) {
+          updates.emailStatus = providerEmailStatus;
+          updates.emailVerifiedAt = now;
+          provenance.push({
+            organizationId: actor.organizationId,
+            entityType: "contact",
+            entityId: contact.id,
+            field: "emailStatus",
+            value: providerEmailStatus,
+            source: providerSource(emailProvider),
+            confidence: PROVIDER_CONFIDENCE,
+            retrievedAt: now,
+          });
+        }
       }
     }
     if (verification && (updates.email ?? contact.email)?.toLowerCase() === verification.email) {
@@ -382,17 +602,22 @@ export async function matchPerson(actor: Actor, input: PersonMatchInput) {
   }
 
   await recordLookups(actor, lookups);
+  // A provider's address that wasn't saved (no contact, or taken) carries the provider's own status.
+  let storedStatus: ContactRow["emailStatus"] = contact?.emailStatus ?? providerEmailStatus ?? "unverified";
+  if (emailProvider && contact?.email !== email) storedStatus = providerEmailStatus ?? "unverified";
   return {
     person: {
       id: contact?.id ?? null,
       firstName: firstName ?? null,
       lastName: lastName ?? null,
       name: [firstName, lastName].filter(Boolean).join(" ") || null,
-      title: contact?.title ?? null,
-      linkedinUrl: contact?.linkedinUrl ?? null,
+      title: contact?.title ?? providerHits.find((h) => h.result.title)?.result.title ?? null,
+      linkedinUrl: contact?.linkedinUrl ?? providerHits.find((h) => h.result.linkedinUrl)?.result.linkedinUrl ?? null,
       email,
-      emailStatus: verification?.email === email ? verification?.status : (contact?.emailStatus ?? "unverified"),
+      emailStatus: verification?.email === email ? verification?.status : storedStatus,
       emailSource,
+      emailProvider,
+      providers: providersCalled,
       emailConfidence,
       emailCandidates: candidates,
       suppressed: domainSuppressed || (givenEmail ? suppressed(givenEmail) : false),
@@ -543,6 +768,14 @@ export async function enrichOrganization(actor: Actor, input: OrganizationEnrich
   if (company && findings && job.status === "completed" && input.apply !== false && can(actor.role, "company:update")) {
     fields = await applyFindingsToCompany(actor, company, findings);
     current = (await companyById(actor, company.id)) ?? company;
+  }
+  // Gaps the website didn't fill come from the workspace's own data providers, if any are enabled.
+  if (current && input.apply !== false) {
+    const filled = await fillCompanyFromProviders(actor, current, domain);
+    if (filled.length) {
+      fields = [...fields, ...filled];
+      current = (await companyById(actor, current.id)) ?? current;
+    }
   }
   return {
     organization: organizationView(current, domain, job),

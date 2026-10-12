@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import type { Metadata } from "next";
 
+import { ScrollbarActivity } from "@/components/scrollbar-activity";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { fontVars } from "@/lib/fonts/registry";
@@ -46,6 +47,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           <PreferencesStoreProvider initialValues={PREFERENCE_DEFAULTS}>
             {children}
             <Toaster />
+            <ScrollbarActivity />
           </PreferencesStoreProvider>
         </TooltipProvider>
       </body>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { BookmarkPlus, ExternalLink, Loader2 } from "lucide-react";
+import { BookmarkPlus, BriefcaseBusiness, ExternalLink, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,19 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { relativeTime } from "@/lib/format-display";
-import type { getIndexCompany, IndexPersonView } from "@/server/services/discovery";
+import type { getIndexCompany, IndexPersonSource, IndexPersonView } from "@/server/services/discovery";
 
 import { apiRequest } from "../api-client";
 import type { IndexActions } from "./index-actions";
-import { hostOf, IndexEmailCell, type IndexPermissions, SavedLink, seniorityLabel } from "./index-results";
+import {
+  hostOf,
+  IndexEmailCell,
+  type IndexPermissions,
+  LinkedinIconLink,
+  SavedLink,
+  safeLinkedin,
+  seniorityLabel,
+} from "./index-results";
 import { CompanyTile } from "./results-table";
 
 type IndexCompanyDetail = Awaited<ReturnType<typeof getIndexCompany>>;
@@ -55,6 +63,18 @@ function ExternalA({ href, children }: { href: string; children: React.ReactNode
     </a>
   );
 }
+
+const SOURCE_LABELS: Record<IndexPersonSource, string> = {
+  crawl: "Company website",
+  companies_house: "Companies House",
+  sec_edgar: "SEC filing",
+};
+
+const SOURCE_NOTES: Record<IndexPersonSource, string> = {
+  crawl: "Public page",
+  companies_house: "Official register",
+  sec_edgar: "Public filing",
+};
 
 function SaveAction({ label, busy, onClick }: { label: string; busy: boolean; onClick: () => void }) {
   return (
@@ -102,6 +122,19 @@ export function IndexPersonSheet({
                     onClick={() => void actions.save("contact", [person.id])}
                   />
                 ) : null}
+                {safeLinkedin(person.linkedinUrl) ? (
+                  <Button asChild variant="outline" size="sm">
+                    <a
+                      href={safeLinkedin(person.linkedinUrl) ?? undefined}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-testid="index-person-sheet-linkedin"
+                    >
+                      <BriefcaseBusiness data-icon="inline-start" aria-hidden="true" />
+                      LinkedIn profile
+                    </a>
+                  </Button>
+                ) : null}
                 {person.goneAt ? (
                   <Badge variant="secondary" className="bg-amber-500/10 font-medium text-amber-700 dark:text-amber-400">
                     No longer listed
@@ -144,9 +177,13 @@ export function IndexPersonSheet({
               </dl>
               <section aria-label="Source" className="flex flex-col gap-1.5">
                 <h3 className="font-mono text-[11px] text-muted-foreground uppercase tracking-wider">Source</h3>
+                <p className="text-sm" data-testid="index-person-source">
+                  {SOURCE_LABELS[person.source] ?? "Company website"}
+                </p>
                 <ExternalA href={person.sourceUrl}>{hostOf(person.sourceUrl) ?? person.sourceUrl}</ExternalA>
                 <p className="text-muted-foreground text-xs">
-                  Public page · first seen <When at={person.firstSeenAt} /> · last seen <When at={person.lastSeenAt} />
+                  {SOURCE_NOTES[person.source] ?? "Public page"} · first seen <When at={person.firstSeenAt} /> · last
+                  seen <When at={person.lastSeenAt} />
                 </p>
               </section>
             </div>
@@ -314,7 +351,10 @@ export function IndexCompanySheet({
                         return (
                           <li key={p.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
                             <div className="flex min-w-0 flex-1 flex-col">
-                              <span className="truncate font-medium">{p.name}</span>
+                              <span className="flex min-w-0 items-center gap-1">
+                                <span className="truncate font-medium">{p.name}</span>
+                                <LinkedinIconLink url={p.linkedinUrl} name={p.name} />
+                              </span>
                               <span className="truncate text-muted-foreground text-xs">
                                 {[p.title, seniorityLabel(p.seniority)].filter(Boolean).join(" · ") ||
                                   "No title listed"}

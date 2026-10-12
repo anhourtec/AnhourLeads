@@ -2,21 +2,20 @@
 
 The running log of where AnhourLeads stands, so the next session can pick up without digging through history. **Update it at the end of every working session** (CLAUDE.md rule 10): newest session first, what changed, what's verified, what's open.
 
-How things work: [architecture.md](./architecture.md). Who can do what: [roles.md](./roles.md). Design rules: [../BRANDING.md](../BRANDING.md). Hostnames and HTTPS: [domains-and-ssl.md](./domains-and-ssl.md). Deploying: [deployment-guide.md](./deployment-guide.md). Migrations: [migration.md](./migration.md). Apollo API model: [reference/apollo-api.md](./reference/apollo-api.md).
+How things work: [architecture.md](./architecture.md). Who can do what: [roles.md](./roles.md). Design rules: [../BRANDING.md](../BRANDING.md). Hostnames and HTTPS: [domains-and-ssl.md](./domains-and-ssl.md). Deploying: [deployment-guide.md](./deployment-guide.md). Migrations: [migration.md](./migration.md). Apollo API model: [reference/apollo-api.md](./reference/apollo-api.md). Data pipeline: [data-pipeline.md](./data-pipeline.md). Browser extension: [browser-extension.md](./browser-extension.md).
 
 ---
 
-## Current state (2026-10-11, evening)
+## Current state (2026-10-11, night)
 
-**Branch:** `feat/discovery-search`, cut from local `feat/apollo-parity` (nothing pushed). All work is committed in focused conventional commits with no AI attribution.
+**Branch:** `feat/data-sources`, cut from local `feat/discovery-search` (nothing pushed). All work is committed in focused conventional commits with no AI attribution.
 
 **Checks at last commit:**
 
 - `npm run typecheck`: clean. `npx biome check` on every changed file: no errors.
-- `npm run test:api` (fresh reseed, crawler containers running): **657 / 657 passed**. The real discovery index (573 companies, 442 people, 5,509 job postings) was identical before and after the reseed.
-- `npm run test:ui`, full suite per viewport with `--workers=2` after a fresh reseed: **desktop 160 passed (1 skipped), tablet 159 (2 skipped), mobile 159 (2 skipped), 0 failed**. Skips are by design: the hostname test runs on desktop only (Acme allows 3 hostnames), and the research-results test needs a crawl the API harness creates.
-- `npm run test:ui:isolated` (empty discovery index on its own server and database): **15 / 15 passed** at desktop, tablet and mobile.
-- `npm run scheduler` with every job (no `SCHEDULER_JOBS`) starts and runs all six jobs; it crashed on start before this session.
+- `npm run test:api` (fresh reseed, crawler containers running): **707 / 707 passed**.
+- `npm run test:ui`, full suite per viewport with `--workers=2`: **desktop 169 passed, tablet 168 (1 skipped), mobile 168 (1 skipped), 0 failed**. The skip is by design: the hostname test runs on desktop only (Acme allows 3 hostnames).
+- `npm run test:ui:isolated` was not re-run this session (no change to the empty-index screens).
 
 **Running locally:**
 
@@ -30,9 +29,11 @@ docker compose --profile crawler logs -f crawler
 
 The crawler and scheduler containers (`anhourleads-crawler`, `anhourleads-scheduler`, built from `deploy/Dockerfile.dev`, source bind-mounted so `restart` picks up changes) publish no ports and reach Postgres and Redis over the compose network. The dev scheduler runs only the discovery job (`DEV_SCHEDULER_JOBS`) so it never sends sequence email behind a test run; `npm run scheduler` on the host runs every job. Sources and the crawl are managed as the platform admin at `/dashboard/platform/data`.
 
-Test logins are in the gitignored `credential.md` (demo password `demo-password-1234`). Migrations run up to `drizzle/0003_discovery_index.sql`. `npm run db:seed -- --reset` keeps the discovery index and crawl tables; add `--reset-index` to wipe them too. Run UI tests per viewport with `--workers=2` on a laptop.
+Test logins are in the gitignored `credential.md` (demo password `demo-password-1234`). Migrations run up to `drizzle/0004_data_sources.sql`. `npm run db:seed -- --reset` keeps the discovery index and crawl tables; add `--reset-index` to wipe them too. Run UI tests per viewport with `--workers=2` on a laptop.
 
-Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev server can reach crawler fixture sites on 127.0.0.1; the crawler container pins it to `false`. **Never set it in production.**
+Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev server can reach crawler fixture sites on 127.0.0.1; the crawler container pins it to `false`. **Never set it in production.** It also has `SEC_USER_AGENT` (contact email for SEC EDGAR) and `DATA_PROVIDERS_TEST_BASE_URL=http://127.0.0.1:48091` (the data-provider API tests need it; leave it unset to use real providers). `COMPANIES_HOUSE_API_KEY` is still empty. After editing `.env`, recreate the containers (`docker compose --profile crawler up -d crawler scheduler`); `restart` doesn't re-read it.
+
+**Shared dev database:** Playwright's global setup reseeds workspace data unless `TEST_SKIP_SEED=true`. Set it whenever more than one person or agent runs tests at once.
 
 ### What AnhourLeads has
 
@@ -54,6 +55,21 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 ---
 
 ## Sessions
+
+### 2026-10-11 (night): more people from legal sources, and full-width pages
+
+**Why:** the shared data had 442 people. A request to scrape LinkedIn profiles was declined: LinkedIn's robots.txt shuts out crawlers, profiles sit behind a login, and doing it at scale needs anti-bot evasion. Four legal routes were built instead.
+
+**Done:**
+
+- **Full width:** pages fill the window by default (the template's "Centered" layout capped them at 1536 px); Centered stays available in the user menu.
+- **Official registries:** seed kinds `companies_house` (UK, needs `COMPANIES_HOUSE_API_KEY`) and `sec_edgar` (US, needs `SEC_USER_AGENT`), managed under Platform → Data → Seed sources. Both start disabled and show the licence (OGL v3.0 / public domain) and which env variable is missing. A company enters the index only with a website domain resolved from Wikidata (P2622 / P5531 → P856), the SEC's own field or an unambiguous exact name match; the rest are skipped and counted. Matching companies get the registry id instead of a duplicate; homepages are queued for the crawler. Only current officers are stored, with name and role only (no birth date, nationality or address). Runs are bounded, resumable through a cursor, idempotent and rate limited (Companies House 1 request/s, SEC 5/s, Retry-After honoured). First live SEC run: 300 of 8,028 listed companies in 10.5 minutes, 221 added, 2 matched, 77 without a website, **1,688 people**.
+- **LinkedIn links:** profile links a company publishes next to its people are kept on `index_person.linkedin_url`, only when the slug fits the person's name (cards often put the link before the name). linkedin.com is never queued or fetched. Results, the person sheet and the company sheet show the link and where the person was found (Company website, Companies House, SEC filing); saving copies it into the contact. `npm run index:backfill-linkedin` re-queued 78 pages: 86 people at 20 companies now have a link.
+- **Bring-your-own data providers:** Settings → Data providers (owner, admin; `provider:manage`) for People Data Labs, Apollo and Hunter keys (encrypted, hint only, test connection uses free endpoints). After the self-hosted steps, enrichment asks enabled providers for empty fields only, with provenance `provider:<name>`, never for do-not-contact records and never into the shared index.
+- **Browser extension** (`extension/`, see [browser-extension.md](./browser-extension.md)): saves the one person on the page the user is looking at into their workspace after review, with a workspace API key. Runs only on a click; no content scripts, LinkedIn API calls or site cookies.
+- Chair titles now count as C-suite seniority (43 stored people reclassified).
+
+**Result:** the shared data went from 573 companies / 442 people to 799 companies / 2,500 people.
 
 ### 2026-10-11 (evening): finding new people, and a real crawl
 
@@ -110,6 +126,7 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 **Flaky / test infrastructure**
 
 - `tests/ui/domains.spec.ts` "an owner adds, sees and removes a local hostname" can fail when desktop, tablet and mobile run it at the same time against Acme's limit of 3 hostnames; it passes on rerun. Fix: give each project its own hostname slot (or raise the limit in the test and restore it).
+- Playwright's global setup reseeds workspace data unless `TEST_SKIP_SEED=true`; concurrent runs by several agents reset each other's data.
 - Parallel Playwright runs share `.playwright-mcp/test-results`; concurrent runs delete each other's traces. Only matters when several people or agents run suites at once; use `--output=<dir>` per run.
 
 - React's dev-only `Performance.measure … negative time stamp` message appears intermittently; tests filter it. Radix `Checkbox`/`Switch` hidden inputs can log hydration mismatches in dev; screens that hit it render those controls after hydration or use display-only icons.
@@ -121,7 +138,9 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 - Usage is stored as `usage.lookup` audit rows (a `usage_event` table would be cleaner); notification preferences have no storage (read-only page); saved-search alerts are stored but not sent; stars on saved searches and dashboards are workspace-wide, not per user; `workflow` description and re-enrollment live in `schedule.settings`.
 
 - AI: the assistant, account briefs and grounded drafts work with a configured provider (`AI_PROVIDER`) and fall back to templates; reply classification is not built.
-- Data providers: no third-party enrichment providers or waterfall yet; enrichment is crawler + patterns + verification only.
+- Data providers: `services/usage.ts` doesn't break out `provider_lookup` in its counters yet (only in totals). Company provider lookups can repeat on automation runs when a provider returns some fields but not others (misses are free with all three).
+- Registries: Companies House hasn't been run live (no key yet). SEC runs read a sample of Forms 3 and 4, so nobody is marked gone; people age out through retention. Registry companies without a resolvable website are skipped, which drops most of the 8,028 SEC filers over time; a domain-finding step (e.g. search by company name) would add more.
+- Browser extension: not published to the Chrome Web Store; install unpacked.
 - No SSO.
 - Domains: certificate issuer, error and routing messages aren't stored (`workspace_domain` would need `cert_issuer`, `cert_error`, `routing_message`), so the UI shows generic sentences. Cloudflare for SaaS custom hostnames must be registered by hand. No notifications on hostname status changes (audited only).
 - Deals board shows one pipeline at a time and the 100 most recent deals. Removing a suppression doesn't restore a contact's previous stage.
@@ -145,4 +164,5 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev serv
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created with the first session's state, checks and open items |
 | 2026-10-11 | Nishchayjeet Singh (Nish) | Discovery search tabs, real crawl, crawler containers, scheduler fix |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Registries, LinkedIn links, data providers, browser extension, full-width layout |
 | 2026-10-11 | Nishchayjeet Singh (Nish) | Apollo parity and self-hosted data pipeline session; current state, checks and open items updated |

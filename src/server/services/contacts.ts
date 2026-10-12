@@ -100,8 +100,25 @@ const contactFieldShape = {
 const hasIdentity = (v: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
   [v.firstName, v.lastName, v.email].some(Boolean);
 
+/** Where a single create came from, when the caller says so (the browser extension). Stored as the contact's source. */
+export const CONTACT_CREATE_SOURCES = ["browser_extension"] as const;
+
+const httpUrl = z
+  .string()
+  .trim()
+  .max(2000)
+  .url()
+  .refine((v) => /^https?:\/\//i.test(v), { message: "Use an http or https address." });
+
 export const contactCreateSchema = z
-  .object({ ...contactFieldShape, runDedupe: z.boolean().optional() })
+  .object({
+    ...contactFieldShape,
+    runDedupe: z.boolean().optional(),
+    /** Overrides the default source ("api" / "manual"). */
+    source: z.enum(CONTACT_CREATE_SOURCES).optional(),
+    /** The page the details were read from; saved on each field's provenance. */
+    sourceUrl: httpUrl.optional(),
+  })
   .refine(hasIdentity, { message: "Give the person a name or an email address.", path: ["email"] });
 export type ContactCreateInput = z.infer<typeof contactCreateSchema>;
 
@@ -418,7 +435,7 @@ export async function contactProvenance(actor: Actor, id: string) {
 /* Writes                                                                     */
 /* -------------------------------------------------------------------------- */
 
-type ContactFields = Omit<ContactCreateInput, "runDedupe">;
+type ContactFields = Omit<ContactCreateInput, "runDedupe" | "source" | "sourceUrl">;
 
 async function checkForeignIds(actor: Actor, v: { ownerId?: string | null; companyId?: string | null }) {
   if (v.ownerId) await assertMember(actor, v.ownerId);
@@ -460,7 +477,8 @@ export async function createContact(
   actor: Actor,
   input: ContactCreateInput,
 ): Promise<{ contact: ContactDto; created: boolean }> {
-  const { runDedupe, customFields: rawCustom, ...fields } = input;
+  const { runDedupe, customFields: rawCustom, source: inputSource, sourceUrl, ...fields } = input;
+  const source = inputSource ?? writeSource(actor);
   const custom = await validateCustomFieldValues(actor, "contact", rawCustom);
   await checkForeignIds(actor, fields);
   if (fields.personaId) await assertPersona(actor, fields.personaId);
@@ -483,16 +501,28 @@ export async function createContact(
       customFields: mergeCustomFieldValues({}, custom),
       ownerId,
       organizationId: actor.organizationId,
-      source: writeSource(actor),
+      source,
     })
     .returning({ id: contact.id, companyId: contact.companyId });
   await recordProvenance(
     actor,
     "contact",
     [...provenanceFor(row.id, fields, PROVENANCE_SKIP), ...customProvenance(row.id, custom)],
-    writeSource(actor),
+    source,
   );
-  await audit(actor, "contact.create", "contact", row.id, { fields: Object.keys(fields) });
+  if (sourceUrl) {
+    await db
+      .update(schema.fieldProvenance)
+      .set({ sourceUrl })
+      .where(
+        and(
+          eq(schema.fieldProvenance.organizationId, actor.organizationId),
+          eq(schema.fieldProvenance.entityType, "contact"),
+          eq(schema.fieldProvenance.entityId, row.id),
+        ),
+      );
+  }
+  await audit(actor, "contact.create", "contact", row.id, { fields: Object.keys(fields), source });
   const dto = await getContact(actor, row.id);
   await recordEvent({
     organizationId: actor.organizationId,
@@ -501,7 +531,7 @@ export async function createContact(
     contactId: row.id,
     companyId: row.companyId,
     actorUserId: actor.userId,
-    metadata: { source: writeSource(actor) },
+    metadata: { source },
   });
   return { contact: dto, created: true };
 }
@@ -654,7 +684,8 @@ export async function bulkCreateContacts(actor: Actor, items: Record<string, unk
 
   const createdIds: string[] = [];
   const existingIds: string[] = [];
-  for (const { runDedupe: _r, customFields: rawCustom, ...fields } of parsed) {
+  // Bulk creates keep the default source; `source` and `sourceUrl` apply to single creates only.
+  for (const { runDedupe: _r, customFields: rawCustom, source: _s, sourceUrl: _u, ...fields } of parsed) {
     const custom = await validateCustomFieldValues(actor, "contact", rawCustom);
     if (fields.personaId) await assertPersona(actor, fields.personaId);
     const known = fields.email ? byEmail.get(fields.email) : undefined;

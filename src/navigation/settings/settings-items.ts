@@ -88,9 +88,16 @@ export const settingsGroups: SettingsGroup[] = [
   {
     id: "integrations",
     title: "Integrations",
-    description: "Connect other tools to this workspace through the API.",
+    description: "Connect other tools through the API, and your own data-provider accounts.",
     icon: Plug,
     links: [
+      {
+        id: "data-providers",
+        title: "Data providers",
+        url: "/dashboard/settings/data-providers",
+        permission: "provider:manage",
+        keywords: ["people data labs", "pdl", "apollo", "hunter", "enrichment", "bring your own"],
+      },
       {
         id: "api-keys",
         title: "API keys",

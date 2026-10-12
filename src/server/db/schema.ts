@@ -1143,6 +1143,28 @@ export const aiMessage = pgTable(
   (t) => [index("ai_message_chat_idx").on(t.chatId, t.createdAt)],
 );
 
+/**
+ * A workspace's own key for an outside data provider (bring your own data). Used to fill gaps the
+ * discovery index and crawler can't; the workspace holds the licence with the provider.
+ */
+export const dataProvider = pgTable(
+  "data_provider",
+  {
+    id: id(),
+    organizationId: orgId(),
+    provider: text("provider", { enum: ["people_data_labs", "apollo", "hunter"] }).notNull(),
+    /** AES-256-GCM (src/server/crypto/secrets.ts); never returned after it is saved. */
+    apiKeyEnc: text("api_key_enc").notNull(),
+    keyHint: text("key_hint"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdById: text("created_by_id").references(() => user.id, { onDelete: "set null" }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("data_provider_org_provider_idx").on(t.organizationId, t.provider)],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Installation-wide discovery index (self-hosted data pipeline)              */
 /* Built only from public sources; never from workspaces' private records.    */
@@ -1169,6 +1191,10 @@ export const indexCompany = pgTable(
     linkedinUrl: text("linkedin_url"),
     twitterUrl: text("twitter_url"),
     emailPattern: text("email_pattern"),
+    /** UK Companies House company number (official registry). */
+    companiesHouseNumber: text("companies_house_number").unique(),
+    /** US SEC EDGAR central index key, without leading zeros. */
+    secCik: text("sec_cik").unique(),
     /** [{ source, url, retrievedAt, fields: string[] }] */
     sources: jsonb("sources").$type<unknown[]>().notNull().default([]),
     firstSeenAt: createdAt(),
@@ -1193,6 +1219,12 @@ export const indexPerson = pgTable(
     department: text("department"),
     /** Only an address the company published itself; otherwise found on demand. */
     publishedEmail: text("published_email"),
+    /** A LinkedIn profile URL the company or a registry published next to the person; never fetched. */
+    linkedinUrl: text("linkedin_url"),
+    /** Where the person was found: the company's own pages or an official registry. */
+    source: text("source", { enum: ["crawl", "companies_house", "sec_edgar"] })
+      .notNull()
+      .default("crawl"),
     sourceUrl: text("source_url").notNull(),
     firstSeenAt: createdAt(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1282,7 +1314,9 @@ export const crawlFrontier = pgTable(
 /** Where seeds come from (Wikidata, domain lists, sitemaps, manual). */
 export const seedSource = pgTable("seed_source", {
   id: id(),
-  kind: text("kind", { enum: ["wikidata", "domain_list", "sitemap", "manual", "ats_boards"] }).notNull(),
+  kind: text("kind", {
+    enum: ["wikidata", "domain_list", "sitemap", "manual", "ats_boards", "companies_house", "sec_edgar"],
+  }).notNull(),
   name: text("name").notNull(),
   config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
   enabled: boolean("enabled").notNull().default(false),

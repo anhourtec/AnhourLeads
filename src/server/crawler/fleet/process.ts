@@ -170,7 +170,15 @@ function pagePeople(extract: PageExtract, domain: string): { people: PersonInput
     let email = p.email && companyEmails.includes(p.email.toLowerCase()) ? p.email.toLowerCase() : null;
     if (!email) email = companyEmails.find((e) => patternsFor(e, p.firstName, p.lastName).length > 0) ?? null;
     if (email) samples.push({ firstName: p.firstName, lastName: p.lastName, email });
-    return { name: p.name, firstName: p.firstName, lastName: p.lastName, title: p.title, email };
+    return {
+      name: p.name,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      title: p.title,
+      email,
+      // A profile link published next to the person: stored as a plain URL, linkedin.com is never fetched.
+      linkedinUrl: p.linkedinUrl,
+    };
   });
   return { people, samples };
 }

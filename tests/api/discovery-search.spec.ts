@@ -33,7 +33,14 @@ test.afterAll(async () => {
 });
 
 interface PeopleResponse {
-  people: { id: string; name: string; netNew: boolean; savedContactId: string | null }[];
+  people: {
+    id: string;
+    name: string;
+    netNew: boolean;
+    savedContactId: string | null;
+    linkedinUrl: string | null;
+    source: string;
+  }[];
   pagination: { total_entries: number };
   counts?: { total: number; net_new: number; saved: number };
 }
@@ -75,6 +82,11 @@ test.describe("index search for the find screens: roles and validation", () => {
       if (search.status() === 200) {
         const body = (await search.json()) as PeopleResponse;
         expect(body.counts?.total).toBe(1);
+        // The LinkedIn profile the company published, and where the person was found.
+        expect(body.people[0]).toMatchObject({
+          linkedinUrl: `https://www.linkedin.com/in/nora-${TAG}`,
+          source: "crawl",
+        });
       }
       const co = await api.post("/api/v1/index/companies/search", {
         data: { domains: fx.domains, includeCounts: true, companies: ["lumen"] },
@@ -180,5 +192,56 @@ test.describe("index search for the find screens: Total / Net new / Saved counts
     expect((await people(GLOBEX_OWNER)).counts).toEqual({ total: 4, net_new: 4, saved: 0 });
     const globex = await apiAs(GLOBEX_OWNER);
     expect((await globex.get(`/api/v1/contacts/${contactId}`)).status()).toBe(404);
+  });
+});
+
+test.describe("index search for the find screens: LinkedIn profiles and sources", () => {
+  test("results and the company sheet carry linkedinUrl and source", async () => {
+    const all = await people(ACME.viewer);
+    const byId = new Map(all.people.map((p) => [p.id, p]));
+    expect(byId.get(fx.people.nora)?.linkedinUrl).toBe(`https://www.linkedin.com/in/nora-${TAG}`);
+    expect(byId.get(fx.people.omar)?.linkedinUrl).toBeNull();
+    expect(byId.get(fx.people.pia)?.source).toBe("companies_house");
+    expect(byId.get(fx.people.quinn)?.source).toBe("crawl");
+
+    const viewer = await apiAs(ACME.viewer);
+    const detail = await viewer.get(`/api/v1/index/companies/${fx.companies.lumen}`);
+    expect(detail.status()).toBe(200);
+    const sheet = (await detail.json()) as { people: { id: string; linkedinUrl: string | null; source: string }[] };
+    expect(sheet.people.find((p) => p.id === fx.people.nora)).toMatchObject({
+      linkedinUrl: `https://www.linkedin.com/in/nora-${TAG}`,
+      source: "crawl",
+    });
+  });
+
+  test("saving copies the profile into a new contact, and fills an existing contact that has none", async () => {
+    const profile = `https://www.linkedin.com/in/nora-${TAG}`;
+    const member = await apiAsRole("member");
+    const saved = await member.post("/api/v1/index/people/save", { data: { ids: [fx.people.nora] } });
+    expect(saved.status(), await saved.text()).toBe(200);
+    const contactId = ((await saved.json()) as { saved: { id: string }[] }).saved[0]?.id;
+    expect(contactId).toBeTruthy();
+    const contact = await member.get(`/api/v1/contacts/${contactId}`);
+    expect(((await contact.json()) as { contact: { linkedinUrl: string | null } }).contact.linkedinUrl).toBe(profile);
+
+    // Globex already holds Nora (same address) without a profile: saving reuses and fills it.
+    const globex = await apiAs(GLOBEX_OWNER);
+    const created = await globex.post("/api/v1/contacts", {
+      data: { firstName: "Nora", lastName: TAG, email: `nora@${fx.domains[0]}` },
+    });
+    expect(created.status(), await created.text()).toBe(201);
+    const existingId = ((await created.json()) as { contact: { id: string } }).contact.id;
+    const again = await globex.post("/api/v1/index/people/save", { data: { ids: [fx.people.nora] } });
+    expect(again.status(), await again.text()).toBe(200);
+    expect(((await again.json()) as { existing: { id: string }[] }).existing[0]?.id).toBe(existingId);
+    const filled = await globex.get(`/api/v1/contacts/${existingId}`);
+    expect(((await filled.json()) as { contact: { linkedinUrl: string | null } }).contact.linkedinUrl).toBe(profile);
+
+    // A profile the workspace set itself is never replaced.
+    const own = "https://www.linkedin.com/in/nora-own-profile";
+    expect((await globex.patch(`/api/v1/contacts/${existingId}`, { data: { linkedinUrl: own } })).status()).toBe(200);
+    await globex.post("/api/v1/index/people/save", { data: { ids: [fx.people.nora] } });
+    const kept = await globex.get(`/api/v1/contacts/${existingId}`);
+    expect(((await kept.json()) as { contact: { linkedinUrl: string | null } }).contact.linkedinUrl).toBe(own);
   });
 });

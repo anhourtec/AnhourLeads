@@ -16,6 +16,14 @@ import { companyDomainFor, seedUrlsFromText } from "./classify";
 import { fleetConfig } from "./config";
 import { isDeniedUrl } from "./denylist";
 import { upsertIndexCompany } from "./index-store";
+import type { RegistryRequirement } from "./registries";
+import {
+  companiesHouseConfig,
+  REGISTRY_DEFAULTS,
+  requirementFor,
+  runRegistrySource,
+  secEdgarConfig,
+} from "./registry-run";
 import {
   buildWikidataQuery,
   isQid,
@@ -31,7 +39,15 @@ import {
  * in the frontier.
  */
 
-export const SEED_KINDS = ["wikidata", "domain_list", "sitemap", "manual", "ats_boards"] as const;
+export const SEED_KINDS = [
+  "wikidata",
+  "domain_list",
+  "sitemap",
+  "manual",
+  "ats_boards",
+  "companies_house",
+  "sec_edgar",
+] as const;
 export type SeedKind = (typeof SEED_KINDS)[number];
 
 const httpUrl = z
@@ -83,7 +99,12 @@ const CONFIG_SCHEMAS = {
   manual: listConfig,
   sitemap: sitemapConfig,
   ats_boards: atsConfig,
+  companies_house: companiesHouseConfig,
+  sec_edgar: secEdgarConfig,
 } as const;
+
+const isRegistryKind = (kind: SeedKind): kind is "companies_house" | "sec_edgar" =>
+  kind === "companies_house" || kind === "sec_edgar";
 
 /** Validate a source's config for its kind; list kinds also accept pasted or uploaded text. */
 function parseConfig(kind: SeedKind, config: unknown, text?: string): Record<string, unknown> {
@@ -127,6 +148,8 @@ export interface SeedSourceView {
   domainCount: number | null;
   lastRunAt: string | null;
   stats: Record<string, unknown> | null;
+  /** Registry sources: what the environment still lacks (API key, User-Agent), or null when ready. */
+  requirement: RegistryRequirement | null;
   createdAt: string;
 }
 
@@ -143,15 +166,20 @@ export function seedView(row: SeedRow): SeedSourceView {
     domainCount: domains ? domains.length : null,
     lastRunAt: row.lastRunAt?.toISOString() ?? null,
     stats: row.stats ?? null,
+    requirement: isRegistryKind(row.kind) ? requirementFor(row.kind, row.config) : null,
     createdAt: row.createdAt.toISOString(),
   };
 }
 
-/** A fresh installation gets one source of each built-in kind (only job boards on by default). */
+/**
+ * One source of each built-in kind, created when its kind is missing (a fresh installation gets all
+ * of them; an older one gets the kinds added since). Only job boards and manual are on by default.
+ */
 export async function ensureDefaultSources(): Promise<void> {
-  const [any] = await db.select({ id: schema.seedSource.id }).from(schema.seedSource).limit(1);
-  if (any) return;
-  await db.insert(schema.seedSource).values([
+  const present = new Set(
+    (await db.selectDistinct({ kind: schema.seedSource.kind }).from(schema.seedSource)).map((r) => r.kind),
+  );
+  const defaults: Array<typeof schema.seedSource.$inferInsert> = [
     {
       kind: "wikidata",
       name: "Wikidata businesses",
@@ -161,7 +189,16 @@ export async function ensureDefaultSources(): Promise<void> {
     { kind: "sitemap", name: "Company sitemaps", enabled: false, config: { maxCompanies: 500, everyDays: 30 } },
     { kind: "ats_boards", name: "Public job boards", enabled: true, config: { everyDays: 1 } },
     { kind: "manual", name: "Added by hand", enabled: true, config: { domains: [] } },
-  ]);
+    {
+      kind: "companies_house",
+      name: "UK Companies House",
+      enabled: false,
+      config: { ...REGISTRY_DEFAULTS.companies_house },
+    },
+    { kind: "sec_edgar", name: "US SEC EDGAR", enabled: false, config: { ...REGISTRY_DEFAULTS.sec_edgar } },
+  ];
+  const missing = defaults.filter((d) => !present.has(d.kind));
+  if (missing.length) await db.insert(schema.seedSource).values(missing);
 }
 
 export async function listSeedSources(): Promise<SeedSourceView[]> {
@@ -184,7 +221,9 @@ export async function getSeedSource(id: string): Promise<SeedSourceView> {
 }
 
 export async function createSeedSource(input: z.infer<typeof seedCreateInput>): Promise<SeedSourceView> {
-  const config = parseConfig(input.kind, input.config, input.text);
+  // Registry sources start from the polite defaults (batch size, time budget, interval).
+  const base = isRegistryKind(input.kind) ? REGISTRY_DEFAULTS[input.kind] : {};
+  const config = parseConfig(input.kind, { ...base, ...input.config }, input.text);
   const [row] = await db
     .insert(schema.seedSource)
     .values({ kind: input.kind, name: input.name, enabled: input.enabled ?? false, config })
@@ -380,6 +419,8 @@ export async function runSeedSource(id: string, options: { refresh?: boolean } =
     else if (row.kind === "domain_list" || row.kind === "manual")
       await runDomainList(row, stats, options.refresh ?? false);
     else if (row.kind === "sitemap") await runSitemaps(row, stats);
+    else if (isRegistryKind(row.kind))
+      Object.assign(stats, await runRegistrySource(row.kind, id, row.config, row.stats));
     else await runAtsBoards(row, stats);
   } catch (error) {
     log.error("seed source run failed", { component: "discovery", sourceId: id, kind: row.kind, error });
@@ -397,7 +438,13 @@ export async function runSeedSource(id: string, options: { refresh?: boolean } =
   return seedView(updated ?? row);
 }
 
-/** Enabled sources whose interval has passed (for the discovery job). */
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Enabled sources whose interval has passed (for the discovery job). Registry sources walk their
+ * list in bounded runs: while a pass is unfinished the next run is due after an hour, unless the
+ * environment still lacks the API key or User-Agent.
+ */
 export async function dueSeedSources(): Promise<SeedRow[]> {
   const rows = await db
     .select()
@@ -405,10 +452,15 @@ export async function dueSeedSources(): Promise<SeedRow[]> {
     .where(
       and(
         eq(schema.seedSource.enabled, true),
-        or(isNull(schema.seedSource.lastRunAt), lt(schema.seedSource.lastRunAt, sql`now() - interval '1 day'`)),
+        or(isNull(schema.seedSource.lastRunAt), lt(schema.seedSource.lastRunAt, sql`now() - interval '1 hour'`)),
       ),
     );
   return rows.filter((r) => {
+    if (isRegistryKind(r.kind) && requirementFor(r.kind, r.config)) return false;
+    if (!r.lastRunAt) return true;
+    const age = Date.now() - r.lastRunAt.getTime();
+    if (isRegistryKind(r.kind) && r.stats?.reachedEnd === false) return age >= HOUR_MS;
+    if (age < 24 * HOUR_MS) return false;
     const days = typeof r.config.everyDays === "number" ? r.config.everyDays : 7;
     return !r.lastRunAt || Date.now() - r.lastRunAt.getTime() >= days * 24 * 60 * 60 * 1000;
   });

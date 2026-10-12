@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { type Browser, expect, test } from "@playwright/test";
 
+import { q } from "../support/discovery-fixtures";
 import { ACME, apiAs, BASE_URL, GLOBEX_OWNER, PLATFORM_ADMIN } from "../support/session";
 import { expectNoHorizontalOverflow, setDarkMode, signedInPage } from "./white-label-ui";
 
@@ -110,6 +111,99 @@ test.describe("platform data pipeline screen", () => {
       await dark.context.close();
     }
   });
+
+  test("registry sources show their licence, what the environment lacks and their totals", async ({
+    browser,
+  }, info) => {
+    test.setTimeout(120_000);
+    const id = uid();
+    const admin = await apiAs(PLATFORM_ADMIN);
+    const chName = `Registry UI CH ${id}`;
+    const secName = `Registry UI SEC ${id}`;
+    const ids: string[] = [];
+    for (const [kind, name] of [
+      ["companies_house", chName],
+      ["sec_edgar", secName],
+    ]) {
+      const res = await admin.post("/api/v1/platform/seed_sources", { data: { kind, name } });
+      expect(res.status()).toBe(201);
+      ids.push((await res.json()).seed_source.id as string);
+    }
+    const stats = {
+      fetched: 300,
+      companiesAdded: 12,
+      companiesMatched: 3,
+      skippedNoWebsite: 285,
+      peopleAdded: 41,
+      errors: [],
+      cursor: 300,
+      candidates: 10_000,
+      reachedEnd: false,
+      totals: { companiesAdded: 12, companiesMatched: 3, skippedNoWebsite: 285, peopleAdded: 41 },
+    };
+    await q("update seed_source set stats = $1::jsonb, last_run_at = now() where id = $2", [
+      JSON.stringify(stats),
+      ids[1],
+    ]);
+
+    try {
+      await checkRegistryCards(browser, info.project.name, chName, secName);
+    } finally {
+      await q("delete from seed_source where id = any($1)", [ids]);
+    }
+  });
+
+  async function checkRegistryCards(browser: Browser, project: string, chName: string, secName: string) {
+    const { context, page, errors } = await signedInPage(browser, PLATFORM_ADMIN);
+    try {
+      await page.goto("/dashboard/platform/data?tab=sources");
+      const ch = page.getByTestId("seed-source").filter({ hasText: chName });
+      const sec = page.getByTestId("seed-source").filter({ hasText: secName });
+      await expect(ch).toBeVisible();
+      await expect(ch.getByText("Licence: Open Government Licence v3.0")).toBeVisible();
+      await expect(sec.getByText("Licence: Public domain (US government work)")).toBeVisible();
+      if (!process.env.COMPANIES_HOUSE_API_KEY) {
+        await expect(ch.getByTestId("source-requirement")).toContainText("API key missing");
+        await expect(ch.getByTestId("source-requirement")).toContainText("COMPANIES_HOUSE_API_KEY");
+        await expect(ch.getByRole("button", { name: "Run now" })).toBeDisabled();
+      }
+      if (!process.env.SEC_USER_AGENT) {
+        await expect(sec.getByTestId("source-requirement")).toContainText("SEC_USER_AGENT");
+      } else {
+        await expect(sec.getByTestId("source-requirement")).toHaveCount(0);
+      }
+      await expect(
+        sec.getByText(/12 companies added · 3 matched · 285 skipped without a website · 41 people added/).first(),
+      ).toBeVisible();
+      await expect(sec.getByTestId("source-totals")).toContainText("next run starts at 300 of 10,000");
+      await ch.scrollIntoViewIfNeeded();
+      await expectNoHorizontalOverflow(page);
+      await ch.screenshot({ path: shot("registry-ch", project) });
+      await sec.screenshot({ path: shot("registry-sec", project) });
+      await sec.getByRole("button", { name: "Configure" }).click();
+      const dialog = page.getByRole("dialog", { name: `Configure ${secName}` });
+      await expect(dialog.getByLabel("Configuration (JSON)")).toHaveValue(/formLookbackDays/);
+      await expectNoHorizontalOverflow(page);
+      await page.getByRole("button", { name: "Cancel" }).click();
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+
+    const dark = await signedInPage(browser, PLATFORM_ADMIN);
+    try {
+      await setDarkMode(dark.context, BASE_URL);
+      await dark.page.goto("/dashboard/platform/data?tab=sources");
+      const ch = dark.page.getByTestId("seed-source").filter({ hasText: chName });
+      await expect(ch).toBeVisible();
+      await ch.scrollIntoViewIfNeeded();
+      await expectNoHorizontalOverflow(dark.page);
+      await ch.screenshot({ path: shot("registry-ch-dark", project) });
+      expect(dark.errors).toEqual([]);
+    } finally {
+      await dark.context.close();
+    }
+  }
 
   for (const email of [ACME.owner, ACME.member, GLOBEX_OWNER]) {
     test(`${email} gets the not-found page`, async ({ browser }) => {

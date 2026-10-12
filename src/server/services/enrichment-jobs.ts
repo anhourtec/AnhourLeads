@@ -17,7 +17,7 @@ import { log } from "@/server/log";
 import { redis } from "@/server/redis";
 
 import { audit } from "./audit";
-import { enrichOrganization, matchPerson } from "./enrichment";
+import { enrichOrganization, fillContactFromProviders, matchPerson } from "./enrichment";
 import { companyByDomain, companyByName, type Lookup, suppressionChecker } from "./enrichment-common";
 import { recordEvent } from "./events";
 import { headerKey, parseCsv, toCsv } from "./records";
@@ -960,6 +960,12 @@ async function enrichContact(actor: Actor, contact: ContactRow, staleBefore: Dat
       contact.emailVerifiedAt < staleBefore;
     if (!due) return { ...base, action: "skipped", detail: "Verified recently." };
     if (!can(actor.role, "contact:update")) return { ...base, action: "skipped", detail: "No permission to update." };
+    // Empty details (title, phone, LinkedIn, location) from the workspace's own data providers, on the
+    // same cadence as re-verification so a provider's credits aren't spent on every run.
+    const filled = await fillContactFromProviders(actor, contact);
+    const extra = filled.fields.length
+      ? ` ${filled.fields.length} field${filled.fields.length === 1 ? "" : "s"} filled from a data provider.`
+      : "";
     const result = await verifyEmail(contact.email, { organizationId: actor.organizationId, force: true });
     const now = new Date();
     await db.transaction(async (tx) => {
@@ -979,7 +985,7 @@ async function enrichContact(actor: Actor, contact: ContactRow, staleBefore: Dat
       });
     });
     await recordLookups(actor, [{ type: "email_verification", cached: result.cached }]);
-    return { ...base, action: "verified", detail: `Email status: ${result.status.replace("_", "-")}.` };
+    return { ...base, action: "verified", detail: `Email status: ${result.status.replace("_", "-")}.${extra}` };
   }
   const match = await matchPerson(actor, { contactId: contact.id, verify: true });
   if (match.person.saved && match.person.email) {
@@ -992,8 +998,18 @@ async function enrichCompany(actor: Actor, companyId: string, reuse: boolean): P
   const result = await enrichOrganization(actor, { companyId, reuse });
   const name = result.organization.name ?? "Company";
   const set = result.fields.filter((f) => f.action === "set").length;
-  if (result.status !== "completed") {
+  if (result.status !== "completed" && !set) {
     return { entityType: "company", id: companyId, name, action: "failed", detail: result.error ?? "Crawl failed." };
+  }
+  const fromProviders = result.fields.filter((f) => f.action === "set" && f.source.startsWith("provider:")).length;
+  if (fromProviders) {
+    return {
+      entityType: "company",
+      id: companyId,
+      name,
+      action: "enriched",
+      detail: `${set} field${set === 1 ? "" : "s"} updated (${fromProviders} from a data provider).`,
+    };
   }
   return {
     entityType: "company",

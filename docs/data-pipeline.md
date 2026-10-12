@@ -103,9 +103,42 @@ The index is **mostly companies**: every seed becomes a company with name, descr
 | Manual | `manual` | Domains an operator types | n/a |
 | Sitemaps | `sitemap` | `/sitemap.xml` of indexed companies (robots.txt applies), for about / team / careers pages | Public pages |
 | Job boards | `ats_boards` | Public JSON APIs of boards a company links from its own site, or that an operator lists in the source's `config.boards` (`[{provider, token, domain}]`; for careers pages that render their openings with JavaScript, which the crawler never runs). A listed board whose company isn't indexed yet creates the company from its domain: Greenhouse `boards-api.greenhouse.io/v1/boards/<token>/jobs`, Lever `api.lever.co/v0/postings/<token>?mode=json`, Ashby `api.ashbyhq.com/posting-api/job-board/<token>`, Workable `apply.workable.com/api/v1/widget/accounts/<token>`. The board pages themselves are never fetched | Documented public APIs |
+| UK Companies House | `companies_house` | Public data API (`api.company-information.service.gov.uk`, free key in `COMPANIES_HOUSE_API_KEY`, HTTP basic auth): `GET /company/{number}` (name, status, incorporation year, registered office town) and `GET /company/{number}/officers` (current officers' names and roles). Candidates: every company Wikidata links to a Companies House number and a website, or, with `config.sicCodes`, active companies from the advanced search. See "Official registries" below | Open Government Licence v3.0 (`OGL-UK-3.0` on provenance) |
+| US SEC EDGAR | `sec_edgar` | `www.sec.gov/files/company_tickers.json` (listed companies, largest first), `data.sec.gov/submissions/CIK##########.json` (name, website when filed, SIC description, business address town / state / country, filing list) and the XML of recent Forms 3 and 4 (reporting owners who are officers or directors, with the officer title). Every request sends `SEC_USER_AGENT` (name + contact email; the source refuses to run without it) | Public domain (US government work, `public-domain` on provenance) |
 | Company websites | (crawl) | About, team, contact and careers pages, feeds, robots.txt | Public pages, robots.txt obeyed |
 
-The SPARQL endpoint and job-board API bases are configurable per seed source (`config.endpoint`, `config.endpoints`), which is how the tests point them at local fixtures.
+The SPARQL endpoint and job-board API bases are configurable per seed source (`config.endpoint`, `config.endpoints`), which is how the tests point them at local fixtures. The registry sources' `endpoint`, `dataEndpoint` and `wikidataEndpoint` are accepted only with `CRAWLER_ALLOW_PRIVATE_HOSTS=true` (tests); anywhere else they are refused with 422.
+
+## Official registries (Companies House, SEC EDGAR)
+
+Code: `src/server/discovery/registries.ts` (pure parsers, names, roles, readiness, Wikidata queries), `registry-run.ts` (runs, HTTP, domain resolution), `registry-store.ts` (registry ids and officers). Both sources are created disabled on every installation (`ensureDefaultSources` adds any default kind that is missing).
+
+**A company needs a website domain** (`index_company.domain` is the key). Registries rarely publish one, so it is resolved, never invented:
+
+1. Wikidata: items with a Companies House ID (P2622) or SEC CIK (P5531) and an official website (P856), fetched in pages of 2,000 (about 4,600 and 3,400 items in October 2026), cached for an hour per process.
+2. The SEC submissions file's own `website` field, when the company filed one.
+3. An index company whose name matches exactly after normalising (case, punctuation, "&"/"and", legal forms such as Inc, Ltd, plc), only when exactly one index company has that name.
+
+Anything else is skipped and counted (`skippedNoWebsite`); websites on the deny-list (LinkedIn…) or reserved hosts are `skippedBadWebsite`; opted-out domains `skippedOptedOut`; dissolved Companies House companies `skippedInactive`; a website already holding a different id from the same registry (a parent and its subsidiary sharing one site) `skippedSharedDomain`. A matching existing company is enriched (registry id, empty fields filled, provenance added), never duplicated. Every resolved company's homepage is queued for the crawler like any other seed.
+
+**People** (`index_person.source` = `companies_house` / `sec_edgar`): only the name and the role.
+
+- Companies House: current officers only (no `resigned_on`), people only (corporate officers skipped); "SMITH, John Michael" → "John Michael Smith" (proper case, particles such as "van der" kept lower case, honorifics dropped); roles made readable (`director` → Director, `secretary` → Company Secretary, `llp-designated-member` → LLP Designated Member…). The response's date of birth, nationality, addresses, occupation and country of residence are dropped in the parser and never stored. `sourceUrl` = the company's public officers page on find-and-update.company-information.service.gov.uk. Officers no longer listed get `goneAt`.
+- SEC: reporting owners of Forms 3 / 4 (and amendments) filed within `formLookbackDays` (default 730) who are officers or directors; organisations (funds, trusts, LPs) skipped; "COOK TIMOTHY D" → "Timothy D Cook"; title = the filed officer title (re-cased only when all capitals), "Director" for directors who aren't officers; the newest filing wins. `sourceUrl` = the filing's EDGAR index page. The owner's address in the filing is never read. Only the newest `maxFilingsPerCompany` (default 12) filings are read, so absence isn't treated as "gone": people not seen again age out through retention.
+- Seniority and department come from the crawler's classifier (`classify.ts`); person opt-outs (`name|domain`) are honoured (`peopleOptedOut`). A person the crawler already found on the company's own pages keeps that source, page and title.
+
+**Runs** are bounded, resumable and idempotent: each run looks at `maxCompanies` candidates (Companies House default 200, SEC 300) within `maxMinutes` (10 / 15), keeps `cursor` in `stats`, and the next run continues there; while a pass is unfinished the discovery job runs the source again after an hour, then waits `everyDays` (default 7). Politeness: Companies House one request a second (its limit is 600 per 5 minutes), SEC five a second (its limit is 10); a 429 / 503 waits for `Retry-After` (else a minute) and tries once more, then the run stops and resumes from the same candidate next time. Companies without a resolvable website cost no profile, officer or filing request.
+
+**Stats** per run: `fetched` (candidates looked at), `companiesAdded`, `companiesMatched`, the `skipped*` counters above, `peopleAdded`, `peopleUpdated`, `peopleOptedOut`, `peopleGone`, `requests`, `queued`, `cursor`, `candidates`, `reachedEnd`, `errors`, and `totals` since the source was created. The Seed sources tab shows them, the licence, and "API key missing" / "User-Agent not set" (with the variable to set) when the environment lacks `COMPANIES_HOUSE_API_KEY` or `SEC_USER_AGENT`; Run now is disabled until it is set. After adding either variable to `.env`, recreate the worker containers (`docker compose --profile crawler up -d crawler scheduler`; a plain `restart` keeps the old environment); the dev server picks up `.env` changes on its own.
+
+**Measured** on the development machine on 2026-10-11, first SEC EDGAR run (`maxCompanies: 300`, defaults otherwise): 300 of 8,028 listed companies looked at in 10.5 minutes and 2,747 requests (under 5 a second, no 429s); 221 companies added and 2 matched to existing ones (website from Wikidata, or the SEC's own field), 77 skipped without a website; 1,688 officers and directors added (CFOs, general counsels, board members…), every homepage queued for the crawler. The index went from 573 companies / 442 people to 799 / 2,500. Companies House was not run live (no key on this machine).
+
+| Config | Companies House | SEC EDGAR |
+| --- | --- | --- |
+| `maxCompanies` | 1–5,000 (200) | 1–10,000 (300) |
+| `maxMinutes` | 1–120 (10) | 1–120 (15) |
+| `everyDays` | 1–365 (7) | 1–365 (7) |
+| other | `sicCodes` (≤ 20 five-digit codes: walk active companies with these codes via the advanced search instead of the Wikidata list) | `formLookbackDays` (30–1,825, 730), `maxFilingsPerCompany` (1–50, 12) |
 
 ## Boundaries (enforced in code and tested)
 
@@ -119,6 +152,7 @@ The SPARQL endpoint and job-board API bases are configurable per seed source (`c
 | Long-running workers never claim local or reserved hosts (fixture sites are driven only by `run_once` with explicit hosts) | `frontier.claimNext`, `classify.RESERVED_HOST_PATTERN` | discovery-units (reserved hosts) |
 | Never fetch social networks, walled gardens, job and review sites or data vendors (LinkedIn, Facebook, Instagram, X/Twitter, TikTok, Glassdoor, Indeed, ZoomInfo, Apollo, RocketReach, Crunchbase…); links to a company's own public profiles are stored, never followed | `discovery/denylist.ts`, checked on enqueue, claim and every redirect | seeds with LinkedIn / Facebook / Crunchbase are `skipped: denylist`; no social URL is ever queued from a page |
 | Never copy workspaces' private records into the index | the index is written only by `fleet/*` and `seeds.ts`; save is one-way (index → workspace) | `discovery.spec.ts` (saving doesn't add or change index rows) |
+| Registries: only name and role stored for officers; current officers only; no key / User-Agent = no request | `registries.ts` parsers, `registry-run.ts` `requirementFor` | `registries-units.spec.ts`, `registries.spec.ts` (fixture registries: resigned and corporate officers excluded, no DOB / nationality / address in any person row, opt-outs, idempotent re-run, refusal without a key) |
 | Opt-outs honoured everywhere | `isOptedOut()`; SQL guards in search and save; enqueue and processing skip opted-out domains | opted-out domain is `skipped: opted_out`, never requested; opted-out person never comes back after a re-crawl; excluded from search and save |
 | Identify ourselves | `CRAWLER_USER_AGENT` + contact URL (`CRAWLER_CONTACT_URL`, default `<primary host>/privacy/removal`) | user agent asserted on every fixture request |
 
@@ -243,3 +277,4 @@ Screen: **Platform → Data pipeline** (`/dashboard/platform/data`): Overview, S
 | --- | --- | --- |
 | 2026-10-11 | Nishchayjeet Singh (Nish) | Created: architecture, sources and licences, boundaries, politeness, opt-outs, scaling, retention, index API |
 | 2026-10-11 | Nishchayjeet Singh (Nish) | Filling the index locally (dev `crawler` compose profile), test resets keep the index, real-web fixes (Wikidata query, page and job-board caps, moved domains, people rules, names, countries, locales), honest coverage |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Official registries: Companies House and SEC EDGAR seed sources (domain resolution, officers, politeness, stats, config) |

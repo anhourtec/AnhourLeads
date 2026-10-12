@@ -41,6 +41,7 @@ Demo accounts: `owner@acme.test`, `admin@acme.test`, `manager@acme.test`, `membe
 | Redis | **48379** | 6379 |
 | Mailpit SMTP / UI | **48025** / **48026** | 1025, 8025 |
 | Isolated test server (`npm run test:ui:isolated`) | **43410** | 3000, 3001, 8080 |
+| Test fixture servers (crawler sites, data-provider mock, registries) | **48090**, **48091**, **48094** | 8000, 8080, 9000 |
 
 New local services get a 4xxxx port bound to 127.0.0.1, overridable via `.env`, and a row here. Production (`deploy/docker-compose.prod.yml`) publishes only 80 and 443 (NGINX).
 
@@ -84,3 +85,4 @@ Anyone who updates this file adds a line here: date (UTC), who, what changed.
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Test logins kept in gitignored `credential.md`; keep it current |
 | 2026-10-11 | Nishchayjeet Singh (Nish) | Rule 9: fonts follow BRANDING.md (Inter, Hanken Grotesk, Roboto Mono) |
 | 2026-10-11 | Nishchayjeet Singh (Nish) | Isolated UI harness (port 43410) in rule 7 and the ports table |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Test fixture server ports (48090, 48091, 48094) |

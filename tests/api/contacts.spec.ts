@@ -82,6 +82,42 @@ test.describe("contacts: role matrix", () => {
     }
   });
 
+  test("POST /contacts with source browser_extension and a source page", async () => {
+    for (const role of ROLES) {
+      const api = await apiAsRole(role);
+      const tag = uid();
+      const sourceUrl = `https://northwind.example/team/${tag}`;
+      const res = await api.post("/api/v1/contacts", {
+        data: {
+          firstName: "Saved",
+          lastName: `From page ${tag}`,
+          title: "Engineer",
+          source: "browser_extension",
+          sourceUrl,
+        },
+      });
+      expect(res.status(), role).toBe(expected(role, "contact:create", 201));
+      if (!res.ok()) continue;
+      const { contact } = await res.json();
+      expect(contact.source).toBe("browser_extension");
+      const prov = (await (await api.get(`/api/v1/contacts/${contact.id}/provenance`)).json()).provenance as {
+        field: string;
+        source: string;
+        sourceUrl: string | null;
+      }[];
+      expect(prov.find((p) => p.field === "title")).toMatchObject({ source: "browser_extension", sourceUrl });
+      expect(prov.map((p) => p.field)).not.toContain("sourceUrl");
+    }
+    const owner = await apiAsRole("owner");
+    for (const data of [
+      { firstName: "Bad", source: "crawler" },
+      { firstName: "Bad", source: "browser_extension", sourceUrl: "javascript:alert(1)" },
+      { firstName: "Bad", sourceUrl: "not a url" },
+    ]) {
+      expect((await owner.post("/api/v1/contacts", { data })).status(), JSON.stringify(data)).toBe(422);
+    }
+  });
+
   test("GET /contacts/:id/provenance", async () => {
     const target = await makeContact(await owner(), { title: "Provenance check" });
     for (const role of ROLES) {

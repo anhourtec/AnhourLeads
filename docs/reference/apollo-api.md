@@ -1037,6 +1037,8 @@ Fetches the payload of an async enrichment webhook (retained 30 days). Returns 4
 
 ## Mapping notes for AnhourLeads
 
+**Our extensions (no Apollo equivalent):** `/api/v1/data_providers` stores a workspace's own People Data Labs, Apollo or Hunter key. Our `people/match` response adds `emailProvider` and `providers`, and `emailSource` can be `"provider"`. `POST /contacts` accepts `source: "browser_extension"` and `sourceUrl` from the browser extension.
+
 Observed resource model and the fields worth modeling. Field lists are drawn from documented response schemas/examples; trim CRM-sync and UI-preference fields we do not need.
 
 ### Core distinction: database vs. saved records

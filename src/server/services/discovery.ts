@@ -291,6 +291,8 @@ export interface IndexCompanyRef {
   city: string | null;
 }
 
+export type IndexPersonSource = (typeof ip.$inferSelect)["source"];
+
 export interface IndexPersonView {
   id: string;
   name: string;
@@ -301,6 +303,10 @@ export interface IndexPersonView {
   department: string | null;
   /** The company published an address for this person; it is revealed when saved ("Access email"). */
   emailAvailable: boolean;
+  /** A LinkedIn profile the company (or a registry) published next to the person. A link only; never fetched. */
+  linkedinUrl: string | null;
+  /** Where the person was found: the company's own website or an official registry. */
+  source: IndexPersonSource;
   sourceUrl: string;
   firstSeenAt: string;
   lastSeenAt: string;
@@ -447,6 +453,8 @@ export async function searchIndexPeople(
         seniority: ip.seniority,
         department: ip.department,
         publishedEmail: ip.publishedEmail,
+        linkedinUrl: ip.linkedinUrl,
+        source: ip.source,
         sourceUrl: ip.sourceUrl,
         firstSeenAt: ip.firstSeenAt,
         lastSeenAt: ip.lastSeenAt,
@@ -575,6 +583,8 @@ export async function getIndexCompany(actor: Actor, id: string) {
         seniority: ip.seniority,
         department: ip.department,
         publishedEmail: ip.publishedEmail,
+        linkedinUrl: ip.linkedinUrl,
+        source: ip.source,
         sourceUrl: ip.sourceUrl,
         lastSeenAt: ip.lastSeenAt,
         goneAt: ip.goneAt,
@@ -809,6 +819,7 @@ export async function saveIndexPeople(actor: Actor, ids: string[]): Promise<Save
     ...rows.flatMap((r) => (r.person.publishedEmail ? [r.person.publishedEmail] : [])),
   ]);
   const mayCreateCompany = can(actor.role, "company:create");
+  const mayUpdateContact = can(actor.role, "contact:update");
   const out: SaveOutcome = { saved: [], existing: [], skipped: [] };
   for (const id of unique) {
     const found = byId.get(id);
@@ -860,6 +871,7 @@ export async function saveIndexPeople(actor: Actor, ids: string[]): Promise<Save
       )
       .limit(1);
     if (dupe) {
+      if (person.linkedinUrl && mayUpdateContact) await fillContactLinkedin(actor, dupe.id, person);
       out.existing.push({ indexId: id, id: dupe.id });
       continue;
     }
@@ -871,6 +883,7 @@ export async function saveIndexPeople(actor: Actor, ids: string[]): Promise<Save
       seniority: seniorityOf(person.seniority),
       department: person.department,
       email,
+      linkedinUrl: person.linkedinUrl,
       companyId,
     };
     const inserted = await db
@@ -924,6 +937,39 @@ export async function saveIndexPeople(actor: Actor, ids: string[]): Promise<Save
     skipped: out.skipped.length,
   });
   return out;
+}
+
+/**
+ * A saved contact without a LinkedIn profile gets the one the index person carries (never
+ * replacing a value the workspace already has), with provenance pointing at the source page.
+ */
+async function fillContactLinkedin(
+  actor: Actor,
+  contactId: string,
+  person: { linkedinUrl: string | null; sourceUrl: string },
+): Promise<void> {
+  if (!person.linkedinUrl) return;
+  const updated = await db
+    .update(contact)
+    .set({ linkedinUrl: person.linkedinUrl })
+    .where(
+      and(eq(contact.id, contactId), eq(contact.organizationId, actor.organizationId), isNull(contact.linkedinUrl)),
+    )
+    .returning({ id: contact.id });
+  if (!updated.length) return;
+  await insertProvenance([
+    {
+      organizationId: actor.organizationId,
+      entityType: "contact" as const,
+      entityId: contactId,
+      field: "linkedinUrl",
+      value: person.linkedinUrl,
+      source: SOURCE,
+      sourceUrl: person.sourceUrl,
+      confidence: 0.7,
+      retrievedAt: new Date(),
+    },
+  ]);
 }
 
 /**

@@ -85,6 +85,7 @@ Display weight is 400 for page titles and 500 for card titles; never bold 700 fo
 - Page structure: header row (title + description on the left, actions on the right; wraps under each other below `sm`), then content in a `flex flex-col gap-4 md:gap-6` stack.
 - Cards: the `Card` component, default radius and border, `gap-4` inside. KPI rows use `grid gap-4 sm:grid-cols-2 xl:grid-cols-4`.
 - Tables live in a card or bordered container that scrolls horizontally on its own (`overflow-x-auto`). **The page itself never scrolls horizontally**, including at 390 px wide.
+- Scrollbars are thin and hidden until their element is scrolled; they disappear a second after scrolling stops (`globals.css` + `src/components/scrollbar-activity.tsx`). Don't give a container its own `scrollbar-color`; `no-scrollbar` / `scrollbar-none` still hide one completely.
 - Filters: a left column on desktop, a `Sheet` opened from a "Filters" button below `lg`.
 - Breakpoints tested: 1440 (desktop), 834 (tablet), 390 (mobile).
 
@@ -132,3 +133,4 @@ Display weight is 400 for page titles and 500 for card titles; never bold 700 fo
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created: fonts, colour, type scale, layout, components, copy, white-label rules |
 | 2026-10-11 | Nishchayjeet Singh (Nish) | Reference parity rule (only colours differ); Inter / Hanken Grotesk / Roboto Mono; `page-title` and mono table headers; sidebar, top bar, settings shell and first-run layout |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Scrollbars show only while scrolling |

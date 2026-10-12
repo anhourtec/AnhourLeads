@@ -60,6 +60,7 @@ Installation (platform administrators)
 | `deliverability:read` (email setup and health) | ✓ | ✓ | ✓ | | |
 | `pipeline:manage`, `stage:manage` (deal pipelines, contact stages and triggers) | ✓ | ✓ | | | |
 | `customfield:manage`, `deliverability:manage` (sending protection, sending domains), `aicontext:manage` | ✓ | ✓ | | | |
+| `provider:manage` (the workspace's own data-provider keys; using them is `enrich:run`) | ✓ | ✓ | | | |
 
 Adding to the do-not-contact list is open to members on purpose: honouring an opt-out should never wait for a manager. Removing an entry is a manager decision.
 

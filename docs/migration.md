@@ -10,6 +10,7 @@ Every file in `drizzle/` with what it changes and how safe it is to roll back (C
 | 0001 | `0001_mailbox_smtp_outbound.sql` | 2026-10-10 | Mailbox SMTP settings, outbound message log | Safe |
 | 0002 | `0002_apollo_parity.sql` | 2026-10-11 | Tables and columns for the Apollo-parity screens | Caution |
 | 0003 | `0003_discovery_index.sql` | 2026-10-11 | Installation-wide discovery index and crawler fleet | Safe |
+| 0004 | `0004_data_sources.sql` | 2026-10-11 | Registry ids, person LinkedIn URL and source, workspace data providers | Safe |
 
 ## 0000_init
 
@@ -41,3 +42,11 @@ Creates every table:
 
 - New tables: `index_company`, `index_person`, `index_job_posting`, `index_news` (installation-wide index built from public sources), `crawl_host` (politeness and robots.txt cache), `crawl_frontier` (URL queue), `seed_source`, `index_optout` (opt-outs and removal requests).
 - Rollback: Safe. Dropping them loses the crawled index only; workspace data is untouched.
+
+## 0004_data_sources
+
+- `index_company`: `companies_house_number`, `sec_cik` (both unique, nullable): official registry ids.
+- `index_person`: `linkedin_url` (a profile link published next to the person; the profile itself is never fetched), `source` (`crawl` default, `companies_house`, `sec_edgar`).
+- New table `data_provider`: a workspace's own key for People Data Labs, Apollo or Hunter (AES-256-GCM, unique per workspace and provider).
+- Seed source kinds `companies_house` and `sec_edgar` (text enum, no DDL).
+- Rollback: Safe. Dropping the columns and table loses registry ids, stored LinkedIn links and saved provider keys only.

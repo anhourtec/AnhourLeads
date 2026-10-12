@@ -288,7 +288,10 @@ export function personLinkedin(href: string): string | null {
     const url = new URL(href);
     const host = url.hostname.toLowerCase().replace(/^(?:www\.|[a-z]{2}\.)/, "");
     const parts = url.pathname.split("/").filter(Boolean);
-    if (host === "linkedin.com" && parts[0] === "in" && parts[1]) return `https://www.linkedin.com/in/${parts[1]}`;
+    const slug = parts[1];
+    if (host === "linkedin.com" && parts[0] === "in" && slug && /^[\w%.-]{2,100}$/.test(slug)) {
+      return `https://www.linkedin.com/in/${slug}`;
+    }
   } catch {
     // Not a URL.
   }
@@ -376,8 +379,9 @@ function personFromJsonLd(obj: JsonObject, sourceUrl: string): FoundPerson | nul
   const parts = splitName(str(obj.name) ?? [str(obj.givenName), str(obj.familyName)].filter(Boolean).join(" "));
   if (!parts) return null;
   const sameAs = strings(obj.sameAs);
-  const linkedin =
-    sameAs.map(personLinkedin).find(Boolean) ?? (str(obj.url) ? personLinkedin(str(obj.url) ?? "") : null);
+  const linkedin = [...sameAs, str(obj.url) ?? ""]
+    .map(personLinkedin)
+    .find((url): url is string => url !== null && slugMatchesName(url, parts.name));
   const email = str(obj.email) ? cleanEmail(str(obj.email) ?? "") : null;
   return {
     ...parts,
@@ -410,7 +414,7 @@ function microdataPeople(html: string, sourceUrl: string): FoundPerson[] {
       sourceUrl,
       method: "microdata",
       confidence: 0.8,
-      linkedinUrl: null,
+      linkedinUrl: linkedinIn(chunk, parts.name),
       email: null,
     });
   });
@@ -423,26 +427,86 @@ function markupPeople(html: string, sourceUrl: string): FoundPerson[] {
   const clean = stripInvisible(html);
   const re =
     /<(h[2-6]|strong|b)\b[^>]*>([\s\S]{3,80}?)<\/\1\s*>\s*(?:<[^>]+>\s*){0,4}?<(p|span|div|h[3-6]|small|em)\b[^>]*>([\s\S]{2,120}?)<\/\3\s*>/gi;
-  for (const m of clean.matchAll(re)) {
+  const matches = [...clean.matchAll(re)];
+  matches.forEach((m, i) => {
     const name = collapse(decodeEntities((m[2] ?? "").replace(/<[^>]+>/g, " ")));
     const title = collapse(decodeEntities((m[4] ?? "").replace(/<[^>]+>/g, " ")));
     const parts = splitName(name);
-    if (!parts || !TITLE_WORDS.test(title) || title.length > 100) continue;
-    const window = clean.slice(m.index ?? 0, (m.index ?? 0) + (m[0]?.length ?? 0) + 600);
-    const linkedin = [...window.matchAll(/href=["']([^"']+)["']/gi)]
-      .map((h) => personLinkedin(h[1] ?? ""))
-      .find(Boolean);
+    if (!parts || !TITLE_WORDS.test(title) || title.length > 100) return;
+    // The profile link sits in the same card, before the name (a photo link) or after the title,
+    // never past the neighbouring people; it must also look like this person's own profile.
+    const start = m.index ?? 0;
+    const end = start + (m[0]?.length ?? 0);
+    const prev = matches[i - 1];
+    const from = Math.max(prev ? (prev.index ?? 0) + (prev[0]?.length ?? 0) : 0, start - 600);
+    const to = Math.min(end + 600, matches[i + 1]?.index ?? Number.POSITIVE_INFINITY);
+    const linkedin = linkedinIn(clean.slice(from, to), parts.name);
     out.push({
       ...parts,
       title,
       sourceUrl,
       method: "markup",
       confidence: 0.6,
-      linkedinUrl: linkedin ?? null,
+      linkedinUrl: linkedin,
       email: null,
     });
-  }
+  });
   return out;
+}
+
+const NAME_PARTICLES = new Set([
+  "van",
+  "von",
+  "der",
+  "den",
+  "del",
+  "della",
+  "de",
+  "da",
+  "di",
+  "du",
+  "la",
+  "le",
+  "mac",
+  "bin",
+]);
+
+function foldName(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Whether a profile slug plausibly belongs to this name: it contains the first or last name
+ * ("ada-lovelace-1a2b", "adal", "lovelace"), or starts with a two-letter one. Cards on real team
+ * pages often put the profile link before the name, so a link found near a heading may belong to
+ * the neighbouring person; a wrong profile is worse than none.
+ */
+export function slugMatchesName(profileUrl: string, name: string): boolean {
+  let slug: string;
+  try {
+    slug = foldName(decodeURIComponent(profileUrl.split("/in/")[1] ?? ""));
+  } catch {
+    return false;
+  }
+  if (!slug) return false;
+  return name
+    .split(/\s+/)
+    .map(foldName)
+    .filter((word) => !NAME_PARTICLES.has(word))
+    .some((word) => (word.length >= 3 ? slug.includes(word) : word.length === 2 && slug.startsWith(word)));
+}
+
+/** The personal LinkedIn profile linked in a chunk of markup that fits the name, normalised (never fetched). */
+function linkedinIn(chunk: string, name: string): string | null {
+  for (const h of chunk.matchAll(/href=["']([^"']+)["']/gi)) {
+    const url = personLinkedin(decodeEntities(h[1] ?? ""));
+    if (url && slugMatchesName(url, name)) return url;
+  }
+  return null;
 }
 
 /**
@@ -507,8 +571,15 @@ export function extractPeople(html: string, objects: JsonObject[], url: URL): Fo
     if (!p || !plausiblePersonName(p.name)) return;
     const key = p.name.toLowerCase();
     const existing = people.get(key);
-    if (!existing || existing.confidence < p.confidence)
-      people.set(key, { ...p, title: p.title ?? existing?.title ?? null });
+    if (!existing) people.set(key, p);
+    else if (existing.confidence < p.confidence)
+      people.set(key, {
+        ...p,
+        title: p.title ?? existing.title,
+        linkedinUrl: p.linkedinUrl ?? existing.linkedinUrl,
+        email: p.email ?? existing.email,
+      });
+    else if (!existing.linkedinUrl && p.linkedinUrl) people.set(key, { ...existing, linkedinUrl: p.linkedinUrl });
   };
   const teamPage = isTeamPath(url);
   const excluded = notStaff(objects);

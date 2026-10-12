@@ -229,8 +229,10 @@ test("run_once crawls the fixture politely and fills the index with provenance",
     department: string;
     published_email: string | null;
     source_url: string;
+    linkedin_url: string | null;
+    source: string;
   }>(
-    "select full_name, seniority, department, published_email, source_url from index_person where company_id = $1 order by full_name",
+    "select full_name, seniority, department, published_email, source_url, linkedin_url, source from index_person where company_id = $1 order by full_name",
     [company?.id],
   );
   expect(people.map((p) => p.full_name)).toEqual(["Ada Lovelace", "Alan Turing", "Grace Hopper"]);
@@ -243,6 +245,19 @@ test("run_once crawls the fixture politely and fills the index with provenance",
   const alan = people.find((p) => p.full_name === "Alan Turing");
   expect(alan?.seniority).toBe("senior");
   expect(alan?.department).toBe("Engineering & Technical");
+  // LinkedIn profiles published next to people: kept (normalised), each on its own person.
+  expect(people.find((p) => p.full_name === "Ada Lovelace")?.linkedin_url).toBe(
+    "https://www.linkedin.com/in/ada-lovelace-disco",
+  );
+  expect(people.find((p) => p.full_name === "Grace Hopper")?.linkedin_url).toBe(
+    "https://www.linkedin.com/in/grace-hopper-disco",
+  );
+  expect(alan?.linkedin_url).toBeNull();
+  expect(people.every((p) => p.source === "crawl")).toBe(true);
+  // ...and never queued or fetched.
+  const profiles = await q("select url from crawl_frontier where url like '%linkedin.com/in/%'");
+  expect(profiles).toHaveLength(0);
+  expect(log.some((r) => r.host.includes("linkedin"))).toBe(false);
 
   // Job boards through their public APIs (the board pages themselves are never fetched).
   const jobs = await q<{ title: string; source: string; department: string | null; location: string | null }>(
@@ -281,12 +296,16 @@ test("re-crawling the team page marks people no longer listed as gone", async ()
   const processed = await runOnce([disco("nimbus")], 1);
   expect(processed[0]?.url).toBe(discoUrl("nimbus", "/team"));
   expect(processed[0]?.outcome).toBe("done");
-  const people = await q<{ full_name: string; gone_at: Date | null }>(
-    "select p.full_name, p.gone_at from index_person p join index_company c on c.id = p.company_id where c.domain = $1 order by p.full_name",
+  const people = await q<{ full_name: string; gone_at: Date | null; linkedin_url: string | null }>(
+    "select p.full_name, p.gone_at, p.linkedin_url from index_person p join index_company c on c.id = p.company_id where c.domain = $1 order by p.full_name",
     [disco("nimbus")],
   );
   expect(people.find((p) => p.full_name === "Alan Turing")?.gone_at).not.toBeNull();
   expect(people.find((p) => p.full_name === "Ada Lovelace")?.gone_at).toBeNull();
+  // v2 no longer links Ada's profile: the one found before is kept, never overwritten with null.
+  expect(people.find((p) => p.full_name === "Ada Lovelace")?.linkedin_url).toBe(
+    "https://www.linkedin.com/in/ada-lovelace-disco",
+  );
   expect(people.find((p) => p.full_name === "Grace Hopper")?.gone_at).toBeNull();
 
   // Seen again → no longer gone.

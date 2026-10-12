@@ -58,17 +58,33 @@ const NIMBUS_ORG = {
   sameAs: ["https://www.linkedin.com/company/nimbus-disco", "https://x.com/nimbusdisco"],
 };
 
+/**
+ * v1: Ada's card links her LinkedIn profile (a regional host with a tracking query, normalised on
+ * the way in), Grace's comes from JSON-LD sameAs, Alan has none. v2 drops Alan and Ada's link, so
+ * a re-crawl must keep the profile already stored. Profile links are stored, never fetched.
+ */
 function teamPage(variant: "v1" | "v2"): string {
   const people = [
     { name: "Ada Lovelace", jobTitle: "Chief Executive Officer", email: "ada.lovelace@nimbus-disco.localhost" },
-    { name: "Grace Hopper", jobTitle: "VP Engineering", email: "grace.hopper@nimbus-disco.localhost" },
+    {
+      name: "Grace Hopper",
+      jobTitle: "VP Engineering",
+      email: "grace.hopper@nimbus-disco.localhost",
+      sameAs: ["https://www.linkedin.com/in/grace-hopper-disco"],
+    },
     ...(variant === "v1" ? [{ name: "Alan Turing", jobTitle: "Senior Software Engineer" }] : []),
   ];
   const ld = { "@context": "https://schema.org", "@graph": people.map((p) => ({ "@type": "Person", ...p })) };
+  const card = (p: { name: string; jobTitle: string }) => {
+    const link =
+      variant === "v1" && p.name === "Ada Lovelace"
+        ? '<a href="https://ca.linkedin.com/in/ada-lovelace-disco/?trk=team">LinkedIn</a>'
+        : "";
+    return `<div><h3>${p.name}</h3><p>${p.jobTitle}</p>${link}</div>`;
+  };
   return html(
     "Team | Nimbus Analytics",
-    `<h1>Our team</h1>${people.map((p) => `<h3>${p.name}</h3><p>${p.jobTitle}</p>`).join("")}
-     <a href="https://www.linkedin.com/in/ada-lovelace">LinkedIn</a><a href="/">Home</a>`,
+    `<h1>Our team</h1>${people.map(card).join("")}<a href="/">Home</a>`,
     `<script type="application/ld+json">${JSON.stringify(ld)}</script>`,
   );
 }
@@ -426,14 +442,16 @@ export async function insertIndexPerson(row: {
   seniority: string | null;
   department: string | null;
   publishedEmail?: string | null;
+  linkedinUrl?: string | null;
+  source?: "crawl" | "companies_house" | "sec_edgar";
   sourceUrl: string;
   goneAt?: Date | null;
 }): Promise<string> {
   const [first, ...rest] = row.fullName.split(" ");
   const [r] = await q<{ id: string }>(
     `insert into index_person (id, company_id, full_name, first_name, last_name, title, seniority, department,
-       published_email, source_url, gone_at)
-     values (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
+       published_email, source_url, gone_at, linkedin_url, source)
+     values (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
     [
       row.companyId,
       row.fullName,
@@ -445,6 +463,8 @@ export async function insertIndexPerson(row: {
       row.publishedEmail ?? null,
       row.sourceUrl,
       row.goneAt ?? null,
+      row.linkedinUrl ?? null,
+      row.source ?? "crawl",
     ],
   );
   if (!r) throw new Error("insert failed");
@@ -511,6 +531,7 @@ export async function seedSearchIndex(tag: string): Promise<SearchIndexFixture> 
     seniority: "c_suite",
     department: "C-Suite",
     publishedEmail: `nora@${lumenDomain}`,
+    linkedinUrl: `https://www.linkedin.com/in/nora-${tag}`,
     sourceUrl: `https://${lumenDomain}/team`,
   });
   const omar = await insertIndexPerson({
@@ -527,6 +548,7 @@ export async function seedSearchIndex(tag: string): Promise<SearchIndexFixture> 
     title: "Head of Marketing",
     seniority: "head",
     department: "Marketing",
+    source: "companies_house",
     sourceUrl: `https://${quarryDomain}/about`,
   });
   const quinn = await insertIndexPerson({
