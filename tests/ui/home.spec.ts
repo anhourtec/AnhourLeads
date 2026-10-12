@@ -2,7 +2,7 @@ import { expect as baseExpect, test } from "@playwright/test";
 
 import { ROLES } from "../../src/lib/rbac/permissions";
 import { freshWorkspace } from "../api/admin-helpers";
-import { ACME, BASE_URL } from "../support/session";
+import { ACME, BASE_URL, newUiContext } from "../support/session";
 import { expectNoHorizontalOverflow, openAs, watchErrors } from "./admin-ui";
 import { ownErrors, wpaShot } from "./shell-ui";
 
@@ -16,7 +16,7 @@ test.describe("home", () => {
     await fresh.api.patch("/api/v1/onboarding", {
       data: { goals: ["outbound"], finished: true, outcome: "email_skipped" },
     });
-    const context = await browser.newContext({ baseURL: BASE_URL, storageState: await fresh.api.storageState() });
+    const context = await newUiContext(browser, { baseURL: BASE_URL, storageState: await fresh.api.storageState() });
     const page = await context.newPage();
     const errors = watchErrors(page);
     try {

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { BASE_URL } from "../support/session";
+import { BASE_URL, newUiContext } from "../support/session";
 import { expectNoHorizontalOverflow, setDarkMode, watchErrors } from "./white-label-ui";
 
 /** The public removal-request page (/privacy/removal): no sign-in, works at every width. */
@@ -10,7 +10,7 @@ const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(
 
 test.describe("public removal page", () => {
   test("an email request ends with 'check your inbox'", async ({ browser }, info) => {
-    const context = await browser.newContext({ baseURL: BASE_URL });
+    const context = await newUiContext(browser, { baseURL: BASE_URL });
     const page = await context.newPage();
     const errors = watchErrors(page);
     try {
@@ -36,7 +36,7 @@ test.describe("public removal page", () => {
   });
 
   test("a domain request shows the DNS record to add, in dark mode too", async ({ browser }, info) => {
-    const context = await browser.newContext({ baseURL: BASE_URL });
+    const context = await newUiContext(browser, { baseURL: BASE_URL });
     await setDarkMode(context, BASE_URL);
     const page = await context.newPage();
     const errors = watchErrors(page);

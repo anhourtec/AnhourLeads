@@ -109,7 +109,7 @@ Personal endpoints: `/api/v1/notifications` (and `/read`) and `/api/v1/onboardin
 
 | When (UTC) | Who | What |
 | --- | --- | --- |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Created: five workspace roles, platform administrators, API keys, matrix and guard rails |
-| 2026-10-10 | Nishchayjeet Singh (Nish) | Combined-permission actions, key revoke and workspace delete rails, platform screen |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Apollo-parity permissions, workflow, consent and AI rules, data pipeline administration |
-| 2026-10-11 | Nishchayjeet Singh (Nish) | Settings navigation filtering, personal endpoints (notifications, onboarding), search scope |
+| 2026-10-10 | Anhourtec | Created: five workspace roles, platform administrators, API keys, matrix and guard rails |
+| 2026-10-10 | Anhourtec | Combined-permission actions, key revoke and workspace delete rails, platform screen |
+| 2026-10-11 | Anhourtec | Apollo-parity permissions, workflow, consent and AI rules, data pipeline administration |
+| 2026-10-11 | Anhourtec | Settings navigation filtering, personal endpoints (notifications, onboarding), search scope |
