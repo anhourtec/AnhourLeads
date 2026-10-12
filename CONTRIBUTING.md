@@ -5,7 +5,7 @@ AnhourLeads, the open-source, self-hosted alternative to Apollo.io, is built and
 ## Set up
 
 ```bash
-git clone <repository-url> AnhourLeads
+git clone https://github.com/anhourtec/AnhourLeads.git
 cd AnhourLeads
 cp .env.example .env        # set BETTER_AUTH_SECRET (openssl rand -base64 48)
 docker compose up -d        # Postgres :48432, Redis :48379, Mailpit :48025 (UI http://localhost:48026)
@@ -53,4 +53,4 @@ How the pieces fit: [docs/architecture.md](./docs/architecture.md). Who can do w
 
 ## Reporting issues
 
-Open an issue in the project's repository with steps to reproduce, what you expected and what happened, or contact Anhourtec at https://anhourtec.com.
+Open an issue at https://github.com/anhourtec/AnhourLeads/issues with steps to reproduce, what you expected and what happened, or contact Anhourtec at https://anhourtec.com.
