@@ -45,7 +45,7 @@ test.describe("foundation: health, auth, tenancy", () => {
     expect((await api.post("/api/auth/sign-in/email", { data: {} })).status()).toBe(404);
   });
 
-  test("template demo routes are hidden", async () => {
+  test("removed admin-template routes return 404", async () => {
     const api = await apiAs(ACME.owner);
     expect((await api.get("/dashboard/crm")).status()).toBe(404);
     expect((await api.get("/auth/v2/login")).status()).toBe(404);
