@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { companyOptions } from "@/server/services/companies";
 import { recordsPageActor } from "@/server/services/records";
-import { loadSearchPage } from "@/server/services/search-page";
+import { loadFindPage } from "@/server/services/search-page";
 
 import { ImportMenu } from "../../_components/records/search/import-menu";
 import { SearchShell } from "../../_components/records/search/search-shell";
@@ -13,7 +13,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function PeoplePage({ searchParams }: { searchParams: SearchParams }) {
   const { actor } = await recordsPageActor("contact:read");
-  const data = await loadSearchPage(actor, "contact", await searchParams);
+  const data = await loadFindPage(actor, "contact", await searchParams);
   const companies = data.permissions.create ? await companyOptions(actor) : [];
   return (
     <SearchShell

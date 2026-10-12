@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ListTree, Search } from "lucide-react";
 
@@ -29,7 +29,11 @@ export function QueueTab() {
   const [pagination, setPagination] = useState<PaginationInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Only the latest request may update the table: an earlier, slower one (say, the unfiltered first
+  // load) must not overwrite a search that answered first.
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const request = ++latest.current;
     const params = new URLSearchParams({ page: String(page), per_page: "25" });
     if (status) params.set("status", status);
     if (kind) params.set("kind", kind);
@@ -37,6 +41,7 @@ export function QueueTab() {
     const res = await apiFetch<{ frontier: FrontierRow[]; pagination: PaginationInfo }>(
       `/api/v1/platform/crawler/frontier?${params}`,
     );
+    if (request !== latest.current) return;
     if (res.ok) {
       setRows(res.data.frontier);
       setPagination(res.data.pagination);

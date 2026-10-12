@@ -7,6 +7,12 @@
 #   Redis     localhost:48379  -> container 6379
 #   Mailpit   localhost:48025  -> SMTP 1025 (dev mail sink), web UI http://localhost:48026
 #   (Next.js dev server runs on the host at :3410 — `npm run dev`)
+#
+# Optional background workers (profile "crawler", no host ports), see docs/data-pipeline.md:
+#
+#   docker compose --profile crawler up -d --build   # discovery crawler + scheduler (discovery job)
+#   docker compose --profile crawler logs -f crawler
+#   docker compose --profile crawler stop crawler scheduler
 
 name: anhourleads
 
@@ -54,6 +60,71 @@ services:
     ports:
       - "127.0.0.1:${MAILPIT_SMTP_PORT:-48025}:1025"
       - "127.0.0.1:${MAILPIT_UI_PORT:-48026}:8025"
+
+  # Discovery crawler worker (scripts/crawler-worker.ts): fills the installation-wide index from
+  # public pages. Settings come from .env; the database and Redis are reached over the compose
+  # network. Private addresses are never crawled here (the test fixtures on 127.0.0.1 are driven by
+  # the dev server through run_once instead).
+  crawler:
+    profiles: [crawler]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.dev
+    image: anhourleads-dev-worker
+    container_name: anhourleads-crawler
+    restart: unless-stopped
+    command: ["node_modules/.bin/tsx", "--conditions=react-server", "scripts/crawler-worker.ts"]
+    env_file: .env
+    environment: &worker-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-anhour}:${POSTGRES_PASSWORD:-anhour_dev_password}@postgres:5432/${POSTGRES_DB:-anhourleads}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-anhour_dev_redis}@redis:6379/0
+      CRAWLER_ALLOW_PRIVATE_HOSTS: "false"
+      # Lanes per worker; politeness is per host (≥ 2 s apart, one request in flight), not per lane.
+      CRAWLER_CONCURRENCY: ${CRAWLER_CONCURRENCY:-8}
+      CRAWLER_HEARTBEAT_FILE: /tmp/crawler-heartbeat
+      SCHEDULER_HEARTBEAT_FILE: /tmp/scheduler-heartbeat
+    volumes: &worker-src
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 40s
+    # Healthy while the heartbeat file (touched every 15 s) is younger than 2 minutes.
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/crawler-heartbeat -mmin -2 | grep -q . || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  # Scheduler (scripts/scheduler.ts). Only the discovery job by default (seed sources, re-crawls,
+  # dead leases, retention), so it never sends sequence email behind a test run; set
+  # DEV_SCHEDULER_JOBS (comma-separated, empty = every job) in .env to run more.
+  scheduler:
+    profiles: [crawler]
+    image: anhourleads-dev-worker
+    container_name: anhourleads-scheduler
+    restart: unless-stopped
+    command: ["node_modules/.bin/tsx", "--conditions=react-server", "scripts/scheduler.ts"]
+    env_file: .env
+    environment:
+      <<: *worker-env
+      SCHEDULER_JOBS: ${DEV_SCHEDULER_JOBS-discovery}
+    volumes: *worker-src
+    depends_on:
+      crawler:
+        condition: service_started
+    stop_grace_period: 70s
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/scheduler-heartbeat -mmin -2 | grep -q . || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
 volumes:
   anhourleads-postgres:

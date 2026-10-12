@@ -257,7 +257,7 @@ Settings replace the app sidebar with a settings sidebar: **Back**, "Search sett
 
 Everything above is implemented with our own components, BRANDING.md tokens (only the colours differ from the reference) and the fonts in the typography table, gated by roles (docs/roles.md) and tested in the API and UI harnesses. Features that need third-party infrastructure (telephony dialer, call recording, website-visitor identification, calendar booking, CRM sync, a hosted contact database) are scaffolded with honest empty states and recorded as gaps; they are not faked.
 
-Data notes for a self-hosted product without a pre-built database: in search, **Total** = all records in the workspace, **Net new** = records not yet in any list, sequence or deal, **Saved** = records owned by you. "Access email" = find + verify the email with our own enrichment (no credits; usage is logged per workspace).
+Data notes for a self-hosted product without a pre-built database: on Find people / Find companies, **Total** = everything in the shared discovery index that matches, **Net new** = index rows the workspace doesn't hold yet, **Saved** = the workspace's own records. On the saved-records and list screens the workspace meanings still apply: **Net new** = records not yet in any list, sequence or deal, **Saved** = records owned by you. "Access email" = find + verify the email with our own enrichment (no credits; usage is logged per workspace).
 
 | Work package | Scope |
 | --- | --- |

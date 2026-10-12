@@ -6,16 +6,17 @@ How things work: [architecture.md](./architecture.md). Who can do what: [roles.m
 
 ---
 
-## Current state (2026-10-11)
+## Current state (2026-10-11, evening)
 
-**Branch:** `feat/apollo-parity`, cut from local `feat/platform-foundation` (14 commits ahead of it, which is 21 ahead of `main`; nothing pushed). All work is committed in focused conventional commits with no AI attribution. The parity packages were built in parallel, so some intermediate commits may not build on their own; the branch tip does.
+**Branch:** `feat/discovery-search`, cut from local `feat/apollo-parity` (nothing pushed). All work is committed in focused conventional commits with no AI attribution.
 
 **Checks at last commit:**
 
-- `npx biome check .`: no errors (about 36 style warnings, mostly nested ternaries). `npm run typecheck`: clean.
-- `npm run test:api` (fresh reseed): **639 / 639 passed** across 64 spec files: every endpoint × owner / admin / manager / member / viewer against the matrix, API keys, 401, 422, CSRF, Globex-vs-Acme isolation, plus engine behaviour (sending through Mailpit, policies, variants, threading, workflows, stage triggers, crawler fleet against fixture sites, removal requests via Mailpit).
-- `npm run test:ui`, run per viewport with `--workers=2` (the all-at-once run was stopped by the OS for low memory): desktop 152 passed, 3 failed, 1 skipped; tablet 153 passed, 1 failed, 2 skipped; mobile 152 passed, 2 failed, 2 skipped. All 6 failures were fixed (4 test-locator or test-artefact issues, 1 real hydration warning on the home checklist, 1 React dev timing message filtered) and the affected specs re-run green at every size; the full three-viewport suite has not been re-run end to end after those fixes.
-- Earlier verification of the foundation (production image, compose config, `nginx -t`, certbot sync) still applies; the new `crawler` compose service passed `docker compose config --quiet` but the worker hasn't run inside a container yet.
+- `npm run typecheck`: clean. `npx biome check` on every changed file: no errors.
+- `npm run test:api` (fresh reseed, crawler containers running): **657 / 657 passed**. The real discovery index (573 companies, 442 people, 5,509 job postings) was identical before and after the reseed.
+- `npm run test:ui`, full suite per viewport with `--workers=2` after a fresh reseed: **desktop 160 passed (1 skipped), tablet 159 (2 skipped), mobile 159 (2 skipped), 0 failed**. Skips are by design: the hostname test runs on desktop only (Acme allows 3 hostnames), and the research-results test needs a crawl the API harness creates.
+- `npm run test:ui:isolated` (empty discovery index on its own server and database): **15 / 15 passed** at desktop, tablet and mobile.
+- `npm run scheduler` with every job (no `SCHEDULER_JOBS`) starts and runs all six jobs; it crashed on start before this session.
 
 **Running locally:**
 
@@ -23,13 +24,15 @@ How things work: [architecture.md](./architecture.md). Who can do what: [roles.m
 docker compose up -d          # Postgres :48432, Redis :48379, Mailpit :48025 / UI http://localhost:48026
 npm install && npm run db:migrate && npm run db:seed
 npm run dev                   # http://localhost:3410 ; white-label host http://acme.localhost:3410
-npm run scheduler             # optional: domains, crawl, sequences, workflows, enrichment, discovery jobs
-npm run crawler               # optional: one discovery crawler worker (CRAWLER_* settings in .env)
+docker compose --profile crawler up -d --build   # crawler worker + scheduler (discovery job only) as containers
+docker compose --profile crawler logs -f crawler
 ```
 
-Test logins are in the gitignored `credential.md` (demo password `demo-password-1234`). Migrations run up to `drizzle/0003_discovery_index.sql`. Run UI tests per viewport with `--workers=2` on a laptop; the full parallel run can exhaust memory.
+The crawler and scheduler containers (`anhourleads-crawler`, `anhourleads-scheduler`, built from `deploy/Dockerfile.dev`, source bind-mounted so `restart` picks up changes) publish no ports and reach Postgres and Redis over the compose network. The dev scheduler runs only the discovery job (`DEV_SCHEDULER_JOBS`) so it never sends sequence email behind a test run; `npm run scheduler` on the host runs every job. Sources and the crawl are managed as the platform admin at `/dashboard/platform/data`.
 
-Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so crawler tests can reach fixture sites on 127.0.0.1. **Never set that in production.**
+Test logins are in the gitignored `credential.md` (demo password `demo-password-1234`). Migrations run up to `drizzle/0003_discovery_index.sql`. `npm run db:seed -- --reset` keeps the discovery index and crawl tables; add `--reset-index` to wipe them too. Run UI tests per viewport with `--workers=2` on a laptop.
+
+Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so the dev server can reach crawler fixture sites on 127.0.0.1; the crawler container pins it to `false`. **Never set it in production.**
 
 ### What AnhourLeads has
 
@@ -51,6 +54,25 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so crawler test
 ---
 
 ## Sessions
+
+### 2026-10-11 (evening): finding new people, and a real crawl
+
+**Why:** Find people only searched the workspace's own records, and the discovery index held 3 fixture companies, so nobody new could be found.
+
+**Done:**
+
+- Find people / Find companies now have Apollo's three tabs: **Total** and **Net new** search the shared discovery index (rows already in the workspace show a Saved link), **Saved** is the workspace's own records with every existing search feature. The default tab is Total when the index has rows. Index rows have Save, Access email (saves, then finds and verifies the address), bulk save, save-then-add to list or sequence, and person and company sheets (people, job postings, news, sources). Filters the index can't apply are disabled with a "Saved records only" note. Index size filters now combine with "or", like workspace search. No new routes or permissions.
+- Filled the index from real public sources: 50 SaaS domains added by hand, Wikidata (500 rows, head count required), 40 verified public job boards (Greenhouse, Ashby), company sitemaps. Result: **573 companies, 442 people at 78 companies (226 leaders), 5,509 job postings, 1,581 news items**. Most large SaaS sites publish no crawlable team page, so people cluster where one exists; published addresses are rare (6).
+- Crawler fixes against the real web: Wikidata query rewritten (the subclass walk timed out at 60 s), large pages truncated instead of skipped (2 MB cap), job-board JSON up to 16 MB, domain moves followed as new seeds, boards for uncrawled companies create the company, false people dropped (product headings, review authors, initial-only surnames), multilingual leadership titles, translated page copies skipped, company names and countries normalised.
+- Workers without an explicit host list never claim reserved test hosts (`localhost`, `*.test`, `*.example`…), so a running crawler can't disturb the fixture specs.
+- Seed `--reset` keeps the index; `--reset-index` wipes it.
+- Platform data Hosts and Crawl queue tables ignore out-of-date responses (the unfiltered first load could overwrite a search once the real crawl made it slow).
+- Fixed the full scheduler crashing on start in plain Node (`createContext is not a function`): `src/server/auth/context.ts`, `services/records.ts` and `services/engage-context.ts` now load `next/navigation` on first use.
+
+- Isolated UI harness (`npm run test:ui:isolated`, `playwright.isolated.config.ts`, `tests/isolated/`): a second dev server on :43410 built into `.next-isolated`, database `anhourleads_isolated` (created, migrated and seeded with `--reset --reset-index` each run; the setup refuses any other database name), Redis db 2. First spec: the empty shared-database screens for owner, viewer and platform admin, which also caught the empty card overflowing its panel.
+- Full UI suite re-run end to end. Fixed: a React missing-key warning on the contact page (server-rendered card actions passed into the client card header), and two tests that depended on data from other tests or on an old mailbox page (mailboxes, audit log).
+
+**Verified:** see "Checks at last commit" above. Playwright MCP screenshots of the new tabs as owner and viewer (desktop, 390 px, dark) in `.playwright-mcp/`.
 
 ### 2026-10-11: Apollo parity and the self-hosted data pipeline
 
@@ -90,13 +112,12 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so crawler test
 - `tests/ui/domains.spec.ts` "an owner adds, sees and removes a local hostname" can fail when desktop, tablet and mobile run it at the same time against Acme's limit of 3 hostnames; it passes on rerun. Fix: give each project its own hostname slot (or raise the limit in the test and restore it).
 - Parallel Playwright runs share `.playwright-mcp/test-results`; concurrent runs delete each other's traces. Only matters when several people or agents run suites at once; use `--output=<dir>` per run.
 
-- The full three-viewport UI suite should be re-run end to end (per viewport, `--workers=2`) to confirm the fixes together; only the affected specs were re-run.
 - React's dev-only `Performance.measure … negative time stamp` message appears intermittently; tests filter it. Radix `Checkbox`/`Switch` hidden inputs can log hydration mismatches in dev; screens that hit it render those controls after hydration or use display-only icons.
 
 **Product gaps (next phases)**
 
 - Not built because they need outside services: phone dialer, meeting booking, call recording, website-visitor identification, form builder, CRM sync, Google / Microsoft mailbox OAuth, inbox sync (replies are marked manually), a reply classifier. Their screens are honest "not available yet" states.
-- Data pipeline: settings and removal requests are stored in the Better Auth `verification` table as a stop-gap (proposed `platform_setting` and `index_removal_request` tables in `docs/data-pipeline.md`); people are keyed by company + full name; seed runs are synchronous; Retry-After isn't honoured; DNS-TXT opt-out success path and the worker in a container are unverified.
+- Data pipeline: settings and removal requests are stored in the Better Auth `verification` table as a stop-gap (proposed `platform_setting` and `index_removal_request` tables in `docs/data-pipeline.md`); people are keyed by company + full name; seed runs are synchronous; Retry-After isn't honoured; DNS-TXT opt-out success path is unverified. People coverage is thin: JavaScript-rendered team pages aren't read (no headless browser), and emails are pattern guesses verified on access.
 - Usage is stored as `usage.lookup` audit rows (a `usage_event` table would be cleaner); notification preferences have no storage (read-only page); saved-search alerts are stored but not sent; stars on saved searches and dashboards are workspace-wide, not per user; `workflow` description and re-enrollment live in `schedule.settings`.
 
 - AI: the assistant, account briefs and grounded drafts work with a configured provider (`AI_PROVIDER`) and fall back to templates; reply classification is not built.
@@ -123,4 +144,5 @@ Local `.env` (gitignored) has `CRAWLER_ALLOW_PRIVATE_HOSTS=true` so crawler test
 | When (UTC) | Who | What |
 | --- | --- | --- |
 | 2026-10-10 | Nishchayjeet Singh (Nish) | Created with the first session's state, checks and open items |
+| 2026-10-11 | Nishchayjeet Singh (Nish) | Discovery search tabs, real crawl, crawler containers, scheduler fix |
 | 2026-10-11 | Nishchayjeet Singh (Nish) | Apollo parity and self-hosted data pipeline session; current state, checks and open items updated |

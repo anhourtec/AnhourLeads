@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { cn } from "cn";
-import { ChevronDown, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, Lock, SlidersHorizontal, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,55 @@ export function SegmentTabs({
         );
       })}
     </fieldset>
+  );
+}
+
+/** A filter that doesn't apply on this tab: label, why, and a way to clear it if it is set. */
+function UnavailableSection({
+  def,
+  hint,
+  state,
+  onChange,
+}: {
+  def: FilterDef;
+  hint: string;
+  state: FilterState;
+  onChange: (patch: FilterPatch) => void;
+}) {
+  const active = activeCountFor(def, state);
+  const Icon = def.icon;
+  const clear = () => {
+    const keys = def.editor === "customFields" ? Object.keys(state).filter((k) => k.startsWith("cf.")) : def.keys;
+    onChange(Object.fromEntries(keys.map((k) => [k, null])));
+  };
+  return (
+    <section
+      className="flex items-center gap-2 border-b px-3 py-3 text-muted-foreground text-sm last:border-b-0"
+      aria-label={`${def.label} (${hint.toLowerCase()})`}
+      data-filter={def.id}
+      data-unavailable="true"
+    >
+      <Icon className="size-4 shrink-0" aria-hidden="true" />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate">{def.label}</span>
+        <span className="truncate text-xs">{hint}</span>
+      </span>
+      {active ? (
+        <Badge variant="secondary" className="gap-1 pr-1 font-mono tabular-nums">
+          {active}
+          <button
+            type="button"
+            aria-label={`Clear ${def.label} filter`}
+            onClick={clear}
+            className="rounded-sm opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <X className="size-3" aria-hidden="true" />
+          </button>
+        </Badge>
+      ) : (
+        <Lock className="size-3.5 shrink-0" aria-hidden="true" />
+      )}
+    </section>
   );
 }
 
@@ -202,9 +251,14 @@ export function FilterRail({
         <SegmentTabs counts={counts} current={segment} onChange={onSegment} locked={lockedSegment} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto border-t">
-        {[...pinned, ...extra].map((def) => (
-          <FilterSection key={def.id} def={def} state={filters} onChange={onChange} ctx={ctx} />
-        ))}
+        {[...pinned, ...extra].map((def) => {
+          const hint = ctx.unavailable?.(def) ?? null;
+          return hint ? (
+            <UnavailableSection key={def.id} def={def} hint={hint} state={filters} onChange={onChange} />
+          ) : (
+            <FilterSection key={def.id} def={def} state={filters} onChange={onChange} ctx={ctx} />
+          );
+        })}
       </div>
       <div className="flex items-center justify-between gap-2 border-t p-3">
         <Button type="button" variant="ghost" size="sm" disabled={!total} onClick={onClearAll}>

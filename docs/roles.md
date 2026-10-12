@@ -90,7 +90,7 @@ Adding to the do-not-contact list is open to members on purpose: honouring an op
 - **Private templates and snippets** are visible only to their owner (404 for everyone else).
 - **AI chats** are private to their author; another person's chat id answers 404.
 - **Usage:** everyone sees their own usage; the per-person breakdown needs `audit:read`.
-- **Discovery index:** searching it needs `search:run`; saving people or companies into the workspace needs `contact:create` / `company:create`; "Access email" also needs `enrich:run`.
+- **Discovery index:** searching it needs `search:run`; saving people or companies into the workspace needs `contact:create` / `company:create`; "Access email" also needs `enrich:run`. On Find people / Find companies the Total and Net new tabs (the index) are open to every role with `search:run`; Save buttons show with `contact:create` / `company:create`, "Access email" with `enrich:run` plus `contact:create`, so viewers see index rows read-only.
 
 ## Platform administrators
 

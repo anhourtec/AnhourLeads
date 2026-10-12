@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Ban, Globe, PlayCircle, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -31,12 +31,17 @@ export function HostsTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const [blockHost, setBlockHost] = useState("");
 
+  // Only the latest request may update the table: an earlier, slower one (say, the unfiltered first
+  // load) must not overwrite a search that answered first.
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const request = ++latest.current;
     const params = new URLSearchParams({ page: String(page), per_page: "25", state });
     if (query) params.set("q", query);
     const res = await apiFetch<{ hosts: HostRow[]; pagination: PaginationInfo }>(
       `/api/v1/platform/crawler/hosts?${params}`,
     );
+    if (request !== latest.current) return;
     if (res.ok) {
       setHosts(res.data.hosts);
       setPagination(res.data.pagination);

@@ -41,6 +41,8 @@ export interface EditorContext {
   options: SearchOptions;
   permissions: SearchPermissions;
   onCreatePersona?: (initial: { titles: string[]; seniorities: string[]; departments: string[] }) => void;
+  /** Why a filter can't be used here (e.g. on the shared database tabs), or null when it can. */
+  unavailable?: (def: FilterDef) => string | null;
 }
 
 interface EditorProps {

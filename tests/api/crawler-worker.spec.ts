@@ -97,7 +97,13 @@ test.beforeAll(async () => {
   const patched = await admin.patch(`/api/v1/platform/seed_sources/${atsSourceId}`, {
     data: {
       enabled: true,
-      config: { endpoints: { greenhouse: `http://${disco("ats")}`, lever: `http://${disco("ats")}` } },
+      config: {
+        endpoints: {
+          greenhouse: `http://${disco("ats")}`,
+          lever: `http://${disco("ats")}`,
+          ashby: `http://${disco("ats")}`,
+        },
+      },
     },
   });
   expect(patched.status(), await patched.text()).toBe(200);
@@ -111,6 +117,8 @@ test.afterAll(async () => {
   }
   await setTeamVariant("v1");
   await q("delete from seed_source where name like 'WP-F%'");
+  // Leave no fixture companies in a real index (the next run starts clean anyway).
+  await cleanDiscovery("%disco.localhost%");
   await closeDiscoDb();
   await fixture.close();
 });
@@ -330,6 +338,40 @@ test("opted-out domains are never crawled and opted-out people never come back",
   ).map((p) => p.full_name);
   expect(names).toContain("Ada Lovelace");
   expect(names).not.toContain("Grace Hopper");
+});
+
+test("real-web shapes: big pages read up to the cap, product headings aren't people, big boards, moved homepages", async () => {
+  test.setTimeout(240_000);
+  const id = await createManualSource(`${SPEC_SOURCE} real web`, [discoUrl("bulky"), discoUrl("moved")].join("\n"));
+  await runSource(id, true);
+  const processed = await runOnce([disco("bulky"), disco("moved"), disco("newhome"), disco("ats")], 20, 180_000);
+  const byUrl = new Map(processed.map((p) => [p.url, p]));
+
+  // A ~2.5 MB homepage is read up to the cap (2 MB) and its facts still come through.
+  expect(byUrl.get(discoUrl("bulky"))?.outcome).toBe("done");
+  const [bulky] = await q<{ id: string; name: string | null }>("select id, name from index_company where domain = $1", [
+    disco("bulky"),
+  ]);
+  expect(bulky?.name).toBe("Bulky Systems");
+
+  // Name-shaped headings for products, plans and customer logos are not people.
+  const people = await q<{ full_name: string }>("select full_name from index_person where company_id = $1", [
+    bulky?.id,
+  ]);
+  expect(people.map((p) => p.full_name)).toEqual(["Mary Major"]);
+
+  // An Ashby board answer of ~3 MB (full descriptions) is read whole.
+  const board = `http://${disco("ats")}/posting-api/job-board/bulkydisco`;
+  expect(byUrl.get(board)?.outcome).toBe("done");
+  const [jobs] = await q<{ n: number }>("select count(*)::int as n from index_job_posting where company_id = $1", [
+    bulky?.id,
+  ]);
+  expect(jobs?.n).toBe(300);
+
+  // A seeded homepage that moved to another domain: the new domain is crawled as the company.
+  expect((await frontierRow(discoUrl("moved")))?.skipped_reason).toBe("moved");
+  expect(byUrl.get(discoUrl("newhome"))?.outcome).toBe("done");
+  expect(await q("select 1 from index_company where domain = $1", [disco("newhome")])).toHaveLength(1);
 });
 
 test("Wikidata seeding reads a SPARQL endpoint politely and upserts companies with CC0 provenance", async () => {

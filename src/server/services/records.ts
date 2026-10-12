@@ -1,13 +1,11 @@
 import "server-only";
 
-import { redirect } from "next/navigation";
-
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { can, type Permission } from "@/lib/rbac/permissions";
 import type { Actor } from "@/server/auth/actor";
-import { type AppContext, getAppContext } from "@/server/auth/context";
+import { type AppContext, getAppContext, navigation } from "@/server/auth/context";
 import { db, schema } from "@/server/db";
 import { HttpError, notFound } from "@/server/http/errors";
 
@@ -26,7 +24,7 @@ export type EntityType = "contact" | "company";
 export async function recordsPageActor(permission: Permission): Promise<{ actor: Actor; context: AppContext }> {
   const context = await getAppContext();
   const workspace = context.workspace;
-  if (!workspace || !can(workspace.role, permission)) redirect("/unauthorized");
+  if (!workspace || !can(workspace.role, permission)) return (await navigation()).redirect("/unauthorized");
   return {
     context,
     actor: {

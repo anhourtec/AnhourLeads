@@ -48,15 +48,15 @@ function FilterCard({
   const [open, setOpen] = useState(false);
   const Icon = def.icon;
   const active = activeCountFor(def, draft);
-  const disabled = def.editor === "disabled";
-  if (disabled) {
+  const hint = def.editor === "disabled" ? "Needs a data provider" : (ctx.unavailable?.(def) ?? null);
+  if (hint) {
     return (
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             type="button"
             aria-disabled="true"
-            aria-label={`${def.label} (needs a data provider)`}
+            aria-label={`${def.label} (${hint.toLowerCase()})`}
             className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2.5 text-left text-muted-foreground text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Icon className="size-4 shrink-0" aria-hidden="true" />
@@ -64,7 +64,7 @@ function FilterCard({
             <Lock className="size-3.5" aria-hidden="true" />
           </button>
         </TooltipTrigger>
-        <TooltipContent>Needs a data provider</TooltipContent>
+        <TooltipContent>{hint}</TooltipContent>
       </Tooltip>
     );
   }
@@ -145,6 +145,7 @@ export function FiltersModal({
   onApply,
   countUrl,
   fixedBody,
+  countBody,
   pinnable = true,
 }: {
   open: boolean;
@@ -158,6 +159,8 @@ export function FiltersModal({
   onApply: (next: FilterState) => void;
   countUrl: string;
   fixedBody: Record<string, unknown>;
+  /** Builds the count request body from the draft (defaults to the draft plus `fixedBody`). */
+  countBody?: (draft: FilterState) => Record<string, unknown>;
 }) {
   const id = useId();
   const [draft, setDraft] = useState<FilterState>(filters);
@@ -181,7 +184,7 @@ export function FiltersModal({
         headers: { "content-type": "application/json" },
         credentials: "same-origin",
         signal: controller.signal,
-        body: JSON.stringify({ ...draft, ...fixedBody, per_page: 1 }),
+        body: JSON.stringify({ ...(countBody ? countBody(draft) : { ...draft, ...fixedBody }), per_page: 1 }),
       })
         .then((r) => (r.ok ? (r.json() as Promise<{ pagination: { total_entries: number } }>) : null))
         .then((d) => setCount(d ? d.pagination.total_entries : null))
@@ -191,7 +194,7 @@ export function FiltersModal({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [draft, open, countUrl, fixedBody]);
+  }, [draft, open, countUrl, fixedBody, countBody]);
 
   const all = filtersFor(ctx.entity);
   const matches = (d: FilterDef) =>
@@ -321,7 +324,11 @@ export function FiltersModal({
                           onChange={change}
                           ctx={ctx}
                           pinned={false}
-                          onTogglePin={def.editor === "disabled" || !pinnable ? undefined : () => togglePin(def.id)}
+                          onTogglePin={
+                            def.editor === "disabled" || ctx.unavailable?.(def) || !pinnable
+                              ? undefined
+                              : () => togglePin(def.id)
+                          }
                         />
                       ))}
                     </section>

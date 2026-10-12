@@ -73,12 +73,19 @@ test.describe("find people (Apollo parity)", () => {
       await page.getByRole("button", { name: "Search", exact: true }).click();
       await expect(page).toHaveURL(/titles=VP\+sales/);
       await expect(page).toHaveURL(/location=Canada/);
+
+      // Total searches the shared database; the workspace's own people are on Saved.
+      const rail = await openRail(page);
+      await expect(rail.getByRole("radio", { name: /Total/ })).toBeChecked();
+      await rail.locator("label", { hasText: "Saved" }).click();
+      await expect(page).toHaveURL(/segment=saved/);
+      await expect(rail.getByRole("radio", { name: /Saved/ })).toBeChecked();
+      await closeRail(page);
       await expect(page.getByRole("link", { name: `Vera Parity${tag}`, exact: true })).toBeVisible();
       await expect(page.getByRole("link", { name: `Ines Parity${tag}`, exact: true })).toHaveCount(0);
 
       // Chips in the rail, removable one by one.
-      const rail = await openRail(page);
-      await expect(rail.getByRole("radio", { name: /Total/ })).toBeChecked();
+      await openRail(page);
       await expect(rail.getByRole("button", { name: "Remove Include titles VP sales" })).toBeVisible();
       await rail.getByRole("button", { name: "Remove Include titles VP sales" }).click();
       await expect(page).not.toHaveURL(/titles=/);
@@ -115,7 +122,7 @@ test.describe("find people (Apollo parity)", () => {
     const { company } = await seed(tag);
     const { context, page, errors } = await openAs(browser, ACME.member);
     try {
-      await page.goto(`/dashboard/people?company=${encodeURIComponent(company.name)}`);
+      await page.goto(`/dashboard/people?company=${encodeURIComponent(company.name)}&segment=saved`);
       await page.waitForLoadState("networkidle");
       await expect(page.getByRole("table")).toBeVisible();
       await expect(page.getByRole("columnheader", { name: "Job title" })).toBeVisible();
@@ -172,7 +179,7 @@ test.describe("find people (Apollo parity)", () => {
     const { company } = await seed(tag);
     const { context, page, errors } = await openAs(browser, ACME.member);
     try {
-      await page.goto(`/dashboard/people?company=${encodeURIComponent(company.name)}`);
+      await page.goto(`/dashboard/people?company=${encodeURIComponent(company.name)}&segment=saved`);
       await page.waitForLoadState("networkidle");
       await page.getByRole("button", { name: "Save as new search" }).click();
       const save = page.getByRole("dialog", { name: "Save as new search" });
@@ -225,7 +232,7 @@ test.describe("find people (Apollo parity)", () => {
       await dialog.getByRole("button", { name: "Add person" }).click();
       await expect(dialog).toBeHidden();
 
-      await page.goto(`/dashboard/people?q=menu-${tag}`);
+      await page.goto(`/dashboard/people?q=menu-${tag}&segment=saved`);
 
       await page.waitForLoadState("networkidle");
       await page.getByRole("checkbox", { name: `Select Menu Added${tag}` }).click();
@@ -251,7 +258,7 @@ test.describe("find people (Apollo parity)", () => {
     const { company, people } = await seed(tag);
     const { context, page, errors } = await openAs(browser, ACME.viewer, { dark: true });
     try {
-      await page.goto(`/dashboard/people?company=${encodeURIComponent(company.name)}`);
+      await page.goto(`/dashboard/people?company=${encodeURIComponent(company.name)}&segment=saved`);
       await page.waitForLoadState("networkidle");
       await expect(page.locator("html")).toHaveClass(/dark/);
       await expect(page.getByRole("link", { name: people[0].name, exact: true })).toBeVisible();

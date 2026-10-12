@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { recordsPageActor } from "@/server/services/records";
-import { loadSearchPage } from "@/server/services/search-page";
+import { loadFindPage } from "@/server/services/search-page";
 
 import { ImportMenu } from "../../_components/records/search/import-menu";
 import { SearchShell } from "../../_components/records/search/search-shell";
@@ -12,7 +12,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function CompaniesPage({ searchParams }: { searchParams: SearchParams }) {
   const { actor } = await recordsPageActor("company:read");
-  const data = await loadSearchPage(actor, "company", await searchParams);
+  const data = await loadFindPage(actor, "company", await searchParams);
   return (
     <SearchShell
       ctx={{ entity: "company", basePath: "/dashboard/companies", fixed: {}, currentUserId: actor.userId ?? "" }}
